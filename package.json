@@ -1,0 +1,26 @@
+{
+  "name": "whatsapp-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "lint": "eslint . --fix"
+  },
+  "dependencies": {
+    "@wppconnect-team/wppconnect": "^1.37.2",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "fs-extra": "^11.1.0",
+    "winston": "^3.8.2",
+    "mime-types": "^3.0.1",
+    "qrcode": "^1.5.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22",
+    "eslint": "^8.0.0"
+  }
+}
