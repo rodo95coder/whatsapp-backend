@@ -1,6 +1,15 @@
 // src/controllers/whatsappController.js
 import sessionManager from '../services/session-manager.js';
 import fileService from '../services/file.js';
+import { acquireSession } from '../core/session-pool.js';
+import { enqueueSession } from '../core/session-queue.js';
+import { getQR } from '../core/session-manager.js';
+
+await enqueueSession(async () => {
+  await acquireSession(companyId);
+});
+
+const qr = getQR(companyId);
 
 export const initSession = async (req, res) => {
   const { companyId } = req.body;
