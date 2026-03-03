@@ -401,7 +401,7 @@ export async function sendMessage({ companyId, numbers, text, filePath, fileName
           let response;
           if (filePath) {
             // Enviar con archivo
-            response = await client.sendFileMessage(number, filePath, fileName || 'file', text);
+            response = await client.sendFile(number, filePath, fileName || 'file', text);
           } else {
             // Solo texto
             response = await client.sendText(number, text);
