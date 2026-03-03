@@ -1,3 +1,4 @@
+// src/core/store.js
 import fs from "fs";
 import { ENV } from "../config/env-config.js";
 

@@ -1,3 +1,4 @@
+// src/core/session-queue.js
 import PQueue from 'p-queue';
 
 const queue = new PQueue({

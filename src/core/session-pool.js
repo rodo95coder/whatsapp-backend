@@ -1,3 +1,4 @@
+// src/core/session-pool.js
 import { initSession, logout, getStatus } from './session-manager.js';
 import logger from '../utils/logger.js';
 

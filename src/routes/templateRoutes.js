@@ -1,8 +1,9 @@
-const express = require("express");
-const router = express.Router();
+// src/routes/templateRoutes.js
+import express from "express";
+import { sendTemplate } from "../controllers/templateController.js";
 
-const { sendTemplate } = require("../controllers/templateController.js");
+const router = express.Router();
 
 router.post("/:companyId/send-template", sendTemplate);
 
-module.exports = router;
+export default router;
