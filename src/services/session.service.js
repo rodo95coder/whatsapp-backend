@@ -278,7 +278,7 @@ async function createClient(companyId) {
         ],
       },
       catchQR: (base64Qr, asciiQR, attempt, urlCode) => {
-        const MAX_QR_ATTEMPTS = 1;
+        const MAX_QR_ATTEMPTS = 5;
 
         //  VALIDACIÓN
         if (
