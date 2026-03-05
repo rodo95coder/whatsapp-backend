@@ -5,8 +5,8 @@ import path from "path";
 import logger from "../utils/logger.js";
 import webhookService from "./webhook.js";
 import config from "../config/env.js";
-import { exec,execSync } from "child_process";
-import { setTimeout } from 'timers/promises';
+import { exec, execSync } from "child_process";
+import { setTimeout } from "timers/promises";
 import { enqueue } from "./queue.service.js";
 import { promisify } from "util";
 import os from "os";
@@ -86,166 +86,97 @@ async function forceKillChromeProcesses(companyId) {
   const platform = os.platform();
   const sessionFolder = companyFolder(companyId);
   const userDataDir = path.join(sessionFolder, companyId);
-  
+
   logger.info(`[${companyId}] TERMINANDO PROCESOS DE CHROME ...`);
-  
+
   if (platform === "win32") {
     // Buscar TODOS los procesos Chrome relacionados
     try {
       // Usar taskkill con filtro por nombre de ventana (funciona en Windows)
-      execSync(`taskkill /F /FI "WINDOWTITLE eq *${companyId}*"`, { stdio: 'ignore' });
-      
+      execSync(`taskkill /F /FI "WINDOWTITLE eq *${companyId}*"`, {
+        stdio: "ignore",
+      });
+
       // También matar por imagen (todos los chrome, pero filtramos después)
-      execSync(`taskkill /F /IM chrome.exe`, { stdio: 'ignore' });
-      
+      execSync(`taskkill /F /IM chrome.exe`, { stdio: "ignore" });
+
       logger.info(`[${companyId}] Procesos Chrome terminados en Windows`);
     } catch (e) {}
-    
   } else {
     // Linux
     try {
-      execSync(`pkill -f "${userDataDir}"`, { stdio: 'ignore' });
-      execSync(`pkill -f "${companyId}"`, { stdio: 'ignore' });
-      execSync(`pkill -f chrome`, { stdio: 'ignore' });
+      execSync(`pkill -f "${userDataDir}"`, { stdio: "ignore" });
+      execSync(`pkill -f "${companyId}"`, { stdio: "ignore" });
+      execSync(`pkill -f chrome`, { stdio: "ignore" });
     } catch (e) {}
-  }  
+  }
 }
 async function forceCleanSession(companyId) {
+  try {
   logger.info(`[${companyId}] LIMPIEZA FORZADA INICIADA (MODO EXTREMO)`);
-  
+
   const platform = os.platform();
   const sessionFolder = companyFolder(companyId);
-  const userDataDir = path.join(sessionFolder, companyId);
-  
-  // ===== 1. CERRAR CLIENTE DE WPPCONNECT =====
-  if (clients[companyId]) {
-    try {
-      // Intentar cerrar gracefulmente
-      await clients[companyId].close().catch(() => {});
-      
-      // Si tiene puppeteer, matar el proceso directamente
-      if (clients[companyId].puppeteer?.process()?.pid) {
-        const pid = clients[companyId].puppeteer.process().pid;
-        try {
-          if (platform === "win32") {
-            execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
-          } else {
-            execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
-          }
-          logger.info(`[${companyId}] Proceso ${pid} terminado`);
-        } catch (e) {}
-      }
-    } catch (e) {}
-    delete clients[companyId];
-  }
-  
-  // ===== 2. MATAR TODOS LOS PROCESOS RELACIONADOS =====
-  logger.info(`[${companyId}] MATANDO TODOS LOS PROCESOS...`);
-  
-  const processNames = ['chrome', 'chromium', 'chrome.exe', 'chromium.exe'];
-  
-  if (platform === "win32") {
-    // En Windows, matar por:
-    // - Nombre de proceso
-    // - Carpeta de perfil
-    // - Puerto (si supieramos el puerto)
-    // - Título de ventana
-    
-    for (const proc of processNames) {
+
+  // 1. PREVENIR MÁS EVENTOS 
+    if (clients[companyId]) {
       try {
-        execSync(`taskkill /F /IM ${proc} /T`, { stdio: 'ignore' }); // /T mata procesos hijos
-      } catch (e) {}
-    }
-    
-    // Matar por carpeta de perfil (más específico)
-    try {
-      execSync(`wmic process where "name='chrome.exe' and commandline like '%${userDataDir}%'" delete`, 
-        { stdio: 'ignore' });
-    } catch (e) {}
-    
-    // Matar por nombre de sesión
-    try {
-      execSync(`taskkill /F /FI "WINDOWTITLE eq *${companyId}*"`, { stdio: 'ignore' });
-    } catch (e) {}
-    
-  } else {
-    // Linux
-    try {
-      execSync(`pkill -9 -f "${userDataDir}"`, { stdio: 'ignore' });
-      execSync(`pkill -9 -f "${companyId}"`, { stdio: 'ignore' });
-      execSync(`pkill -9 chrome`, { stdio: 'ignore' });
-      execSync(`pkill -9 chromium`, { stdio: 'ignore' });
-    } catch (e) {}
-  }
-  
-  // ===== 3. ESPERAR QUE LOS PROCESOS MUERAN =====
-  logger.info(`[${companyId}] Esperando que los procesos terminen...`);
-  await setTimeout(5000); // Esperar 5 segundos
-  
-  // ===== 4. INTENTAR ELIMINAR CARPETA CON MÁS FUERZA =====
-  logger.info(`[${companyId}] INTENTANDO ELIMINAR CARPETA...`);
-  
-  let carpetaEliminada = false;
-  for (let i = 0; i < 10; i++) { // Aumentado a 10 intentos
-    try {
-      if (fs.existsSync(sessionFolder)) {
-        // En Windows, a veces ayuda cambiar permisos antes de eliminar
-        if (platform === "win32") {
-          try {
-            execSync(`attrib -R -S -H "${sessionFolder}\\*" /S /D`, { stdio: 'ignore' });
-          } catch (e) {}
+        // Remover todos los listeners para evitar que se disparen más eventos
+        if (clients[companyId].removeAllListeners) {
+          clients[companyId].removeAllListeners();
         }
         
-        fs.removeSync(sessionFolder);
-        logger.info(`[${companyId}] Carpeta eliminada en intento ${i+1}`);
-        carpetaEliminada = true;
-        break;
+        // Cerrar el cliente en segundo plano y capturar cualquier error
+        clients[companyId].close().catch(e => {
+          logger.debug(`[${companyId}] Error esperado al cerrar: ${e.message}`);
+        });
+      } catch (e) {
+        logger.debug(`[${companyId}] Error al cerrar cliente: ${e.message}`);
+      }
+      
+      // Eliminar referencia después de un tiempo
+      setTimeout(() => {
+        delete clients[companyId];
+      }, 1000);
+    }
+
+  // 2. MATAR PROCESOS (con manejo de errores)
+    logger.info(`[${companyId}] MATANDO TODOS LOS PROCESOS...`);
+    try {
+      if (platform === "win32") {
+        execSync(`taskkill /F /IM chrome.exe /T`, { stdio: 'ignore' });
       } else {
-        carpetaEliminada = true;
-        break;
+        execSync(`pkill -9 chrome`, { stdio: 'ignore' });
+      }
+    } catch (e) {}
+
+  // ===== 3. ESPERAR QUE LOS PROCESOS MUERAN =====
+   await setTimeout(3000);
+
+  // 4. ELIMINAR CARPETA
+    try {
+      if (fs.existsSync(sessionFolder)) {
+        fs.removeSync(sessionFolder);
+        logger.info(`[${companyId}] Carpeta eliminada`);
       }
     } catch (e) {
-      logger.warn(`[${companyId}] Error eliminando carpeta (intento ${i+1}): ${e.message}`);
-      
-      // Si el error es EBUSY, matar procesos más agresivamente
-      if (e.message.includes('EBUSY')) {
-        try {
-          if (platform === "win32") {
-            // Buscar procesos que tengan archivos abiertos en la carpeta
-            execSync(`taskkill /F /IM chrome.exe /T`, { stdio: 'ignore' });
-            execSync(`taskkill /F /IM chromium.exe /T`, { stdio: 'ignore' });
-          }
-        } catch (err) {}
-      }
-      
-      if (i < 9) await setTimeout(3000);
+      logger.warn(`[${companyId}] Error eliminando carpeta: ${e.message}`);
     }
+
+  // 5. LIMPIAR ESTADOS
+    delete statusByCompany[companyId];
+    delete qrByCompany[companyId];
+    delete qrAttempts[companyId];
+    delete reconnectState[companyId];
+    delete qrBlocked[companyId];
+    
+    logger.info(`[${companyId}] LIMPIEZA FORZADA COMPLETADA`);
+    
+  } catch (error) {
+    logger.error(`[${companyId}] Error en limpieza forzada: ${error.message}`);
   }
-  
-  if (!carpetaEliminada) {
-    logger.error(`[${companyId}] NO SE PUDO ELIMINAR LA CARPETA DESPUÉS DE 10 INTENTOS`);
-    // Último recurso: renombrar la carpeta para que no interfiera
-    try {
-      const backupFolder = `${sessionFolder}_backup_${Date.now()}`;
-      fs.renameSync(sessionFolder, backupFolder);
-      logger.info(`[${companyId}] Carpeta renombrada a ${path.basename(backupFolder)}`);
-    } catch (e) {}
-  }
-  
-  // ===== 5. RESETEAR ESTADOS =====
-  delete statusByCompany[companyId];
-  delete qrByCompany[companyId];
-  if (qrAttempts) delete qrAttempts[companyId];
-  delete reconnectState[companyId];
-  delete qrBlocked[companyId];
-  
-  if (reconnectTimeouts[companyId]) {
-    clearTimeout(reconnectTimeouts[companyId]);
-    delete reconnectTimeouts[companyId];
-  }
-  
-  logger.info(`[${companyId}] LIMPIEZA FORZADA COMPLETADA ${carpetaEliminada ? '' : ''}`);
 }
+
 function scheduleReconnect(companyId) {
   reconnectState[companyId] = reconnectState[companyId] || {
     attempts: 0,
@@ -347,40 +278,49 @@ async function createClient(companyId) {
         ],
       },
       catchQR: (base64Qr, asciiQR, attempt, urlCode) => {
-        const MAX_QR_ATTEMPTS = 5;
-        
+        const MAX_QR_ATTEMPTS = 1;
+
         //  VALIDACIÓN
-        if (attempt > MAX_QR_ATTEMPTS || statusByCompany[companyId] === "QR_FAILED") {
-          
+        if (
+          attempt > MAX_QR_ATTEMPTS ||
+          statusByCompany[companyId] === "QR_FAILED"
+        ) {
           // Si es la primera vez que detectamos el exceso, hacer limpieza
           if (!qrBlocked[companyId] && attempt > MAX_QR_ATTEMPTS) {
             qrBlocked[companyId] = true;
-            
-            logger.error(`[${companyId}] LÍMITE DE QR EXCEDIDO (${MAX_QR_ATTEMPTS}) - DETENIENDO`);
+
+            logger.error(
+              `[${companyId}] LÍMITE DE QR EXCEDIDO (${MAX_QR_ATTEMPTS}) - DETENIENDO`,
+            );
 
             // 1. Marcar como fallido
             statusByCompany[companyId] = "QR_FAILED";
             qrByCompany[companyId] = null;
 
-            // 2. Forzar cierre del proceso del navegador
-            try {
-              if (clients[companyId] && clients[companyId].puppeteer?.process()?.pid) {
-                const pid = clients[companyId].puppeteer.process().pid;
-                execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
-                logger.info(`[${companyId}] Proceso ${pid} terminado por límite de QR`);
-              }
-            } catch (e) {}
+             // 2. SEGUNDO: Prevenir más eventos del cliente
+      if (clients[companyId]) {
+        try {
+          // Desconectar todos los listeners
+          clients[companyId].removeAllListeners?.();
+          // Cerrar sin esperar
+          clients[companyId].close().catch(() => {});
+        } catch (e) {}
+      }
 
-            // 3. Lanzar limpieza asíncrona (no esperar)
-            forceCleanSession(companyId).catch(() => {});
-          }
-          
-          return;
-        }
-        
-        // QR normal (dentro del límite)
+      // 3. TERCERO: Limpieza forzada (sin await para no bloquear)
+      forceCleanSession(companyId).catch(err => {
+        logger.error(`[${companyId}] Error en limpieza: ${err.message}`);
+      });
+    }
+    
+    return;
+  }
+
+        // QR normal
         qrAttempts[companyId] = attempt;
-        logger.info(`[${companyId}] QR generado (intento ${attempt}/${MAX_QR_ATTEMPTS})`);
+        logger.info(
+          `[${companyId}] QR generado (intento ${attempt}/${MAX_QR_ATTEMPTS})`,
+        );
         qrByCompany[companyId] = base64Qr;
         statusByCompany[companyId] = "SCAN_PENDING";
 
@@ -431,7 +371,9 @@ async function createClient(companyId) {
         }
       });
     } catch (e) {
-      logger.warn(`[${companyId}] client.onMessage no disponible: ${e.message}`);
+      logger.warn(
+        `[${companyId}] client.onMessage no disponible: ${e.message}`,
+      );
     }
 
     // Configurar manejador de cambios de estado
@@ -450,7 +392,9 @@ async function createClient(companyId) {
         if (state === "UNPAIRED" || state === "browserClose") {
           const isLoggingOut = logoutInProgress[companyId];
           if (isLoggingOut) {
-            logger.info(`[${companyId}] Logout en progreso, ignorando reconexión automática`);
+            logger.info(
+              `[${companyId}] Logout en progreso, ignorando reconexión automática`,
+            );
             return;
           }
         }
@@ -465,7 +409,9 @@ async function createClient(companyId) {
         ];
 
         if (criticalStates.includes(state)) {
-          logger.warn(`[${companyId}] Estado crítico detectado: ${state}. Iniciando reconexión...`);
+          logger.warn(
+            `[${companyId}] Estado crítico detectado: ${state}. Iniciando reconexión...`,
+          );
 
           // Limpiar cliente actual
           if (clients[companyId]) {
@@ -478,13 +424,17 @@ async function createClient(companyId) {
           if (reconnectTimeouts[companyId]) {
             clearTimeout(reconnectTimeouts[companyId]);
           }
-          
+
           reconnectTimeouts[companyId] = setTimeout(async () => {
             try {
-              logger.info(`[${companyId}] Ejecutando reconexión automática por estado: ${state}`);
+              logger.info(
+                `[${companyId}] Ejecutando reconexión automática por estado: ${state}`,
+              );
               await createClient(companyId);
             } catch (error) {
-              logger.error(`[${companyId}] Error en reconexión automática: ${error.message}`);
+              logger.error(
+                `[${companyId}] Error en reconexión automática: ${error.message}`,
+              );
               scheduleReconnect(companyId);
             } finally {
               delete reconnectTimeouts[companyId];
@@ -495,7 +445,11 @@ async function createClient(companyId) {
         }
 
         // Manejo de estados de conexión normal
-        if (state === "CONNECTED" || state === "inChat" || state === "isLogged") {
+        if (
+          state === "CONNECTED" ||
+          state === "inChat" ||
+          state === "isLogged"
+        ) {
           logger.info(`[${companyId}] Sesión conectada exitosamente`);
           delete reconnectState[companyId];
           if (reconnectTimeouts[companyId]) {
@@ -532,8 +486,7 @@ async function createClient(companyId) {
 
     logger.info(`[${companyId}] Cliente creado exitosamente`);
     return client;
-    
-  } catch (error) { 
+  } catch (error) {
     logger.error(`[${companyId}] Error creando cliente: ${error.message}`);
     statusByCompany[companyId] = "ERROR";
     throw error;
@@ -552,7 +505,7 @@ export async function initSession(companyId) {
   }
   ensureCompanyFolder(cleanId);
 
-     // Si ya existe cliente activo, no reiniciar
+  // Si ya existe cliente activo, no reiniciar
   if (
     clients[cleanId] &&
     statusByCompany[cleanId] !== "browserClose" &&
@@ -573,12 +526,12 @@ export async function initSession(companyId) {
       } catch {}
       delete clients[cleanId];
     }
-    
+
     // Limpieza adicional para estados críticos
     await forceCleanSession(cleanId);
   }
 
-    // Marcar estado inicial
+  // Marcar estado inicial
   statusByCompany[cleanId] = "INITIALIZING";
 
   // Lanzar proceso en background
