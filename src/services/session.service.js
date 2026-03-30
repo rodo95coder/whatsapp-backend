@@ -6,28 +6,34 @@ import logger from "../utils/logger.js";
 import webhookService from "./webhook.js";
 import config from "../config/env.js";
 import { exec, execSync } from "child_process";
-import { setTimeout } from "timers/promises";
-import { enqueue } from "./queue.service.js";
-import { promisify } from "util";
+import { enqueueMessage, getQueueSize } from "../core/message-queue.js";
+import { withTimeout } from "../utils/timeout.js";
+import { setTimeout as sleep } from "timers/promises";
 import os from "os";
 
-const execAsync = promisify(exec);
-const qrBlocked = {};
 const { sessionsPath, puppeteerPath } = config;
-fs.ensureDirSync(sessionsPath);
 
-// Reconnection policy
+// ===== CONFIG =====
+const MAX_SESSIONS = 5;
+const SESSION_LOCK_TTL = 15000; // 15 segundos
+
 const RECONNECT_MAX_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 3000;
 const RECONNECT_MAX_DELAY_MS = 60000;
 
+// ===== STATE =====
 const clients = {}; // companyId -> client instance
 const qrByCompany = {}; // companyId -> qr base64
 const statusByCompany = {};
-const reconnectState = {}; // companyId -> { attempts, timerId }
-const reconnectTimeouts = {}; // Para controlar los timeouts de reconexión
+const creatingClients = new Set();
 const qrAttempts = {}; //  Para contar intentos de QR
-const logoutInProgress = {}; //  Para controlar logout
+const reconnectState = {}; // companyId -> { attempts, timerId }
+const sessionLocks = new Map(); // evita múltiples inits
+const statusMeta = {};
+
+// ===== HELPERS =====
+const CONNECTED_STATES = ["CONNECTED", "inChat", "isLogged", "MAIN", "NORMAL"];
+const CRITICAL_STATES = ["DISCONNECTED", "CLOSED", "UNPAIRED", "browserClose"];
 
 function companyFolder(companyId) {
   return path.join(sessionsPath, String(companyId));
@@ -39,157 +45,137 @@ function ensureCompanyFolder(companyId) {
   return f;
 }
 
+function updateStatus(companyId, status) {
+  statusByCompany[companyId] = status;
+  statusMeta[companyId] = { status, lastUpdate: Date.now() };
+}
+
 function readWebhookUrl(companyId) {
   try {
-    const cfgPath = path.join(companyFolder(companyId), "webhook.json");
-    const obj = fs.readJsonSync(cfgPath, { throws: false });
-    return obj && obj.url ? obj.url : null;
-  } catch (e) {
+    const cfg = fs.readJsonSync(
+      path.join(companyFolder(companyId), "webhook.json"),
+      { throws: false },
+    );
+    return cfg?.url || null;
+  } catch {
     return null;
   }
 }
 
+function clearSessionMemory(companyId) {
+  delete clients[companyId];
+  delete qrByCompany[companyId];
+  delete statusByCompany[companyId];
+  delete statusMeta[companyId];
+  delete reconnectState[companyId];
+}
+async function safeCloseClient(companyId) {
+  try {
+    const client = clients[companyId];
+    if (!client) return;
+
+    if (client) {
+      if (!["QR_FAILED", "ERROR"].includes(statusByCompany[companyId])) {
+        updateStatus(companyId, "DISCONNECTED");
+      }
+
+      logger.info(`[${companyId}] Cerrando cliente de forma segura...`);
+      // remover eventos para evitar loops
+      client.removeAllListeners?.();
+
+      try {
+        await client.close();
+      } catch {}
+      logger.info(`[${companyId}] Cliente cerrado correctamente`);
+    }
+  } catch (err) {
+    logger.warn(`[${companyId}] Error cerrando cliente: ${err.message}`);
+  } finally {
+    delete clients[companyId];
+    creatingClients.delete(companyId);
+  }
+}
 async function killOldBrowser(companyId) {
   const platform = os.platform();
-  logger.info(`[${companyId}] Limpiando procesos en ${platform}...`);
+  const hadClient = !!clients[companyId];
+  await safeCloseClient(companyId);
 
-  const sessionDir = companyFolder(companyId);
-  const userDataDir = path.join(sessionDir, companyId);
+  const userDataDir = companyFolder(companyId);
 
-  // ===== 1. MATAR PROCESOS DE CHROME =====
-  forceKillChromeProcesses(companyId);
-
-  // ===== 2. ELIMINAR ARCHIVOS DE BLOQUEO =====
-  const lockFile = path.join(userDataDir, "SingletonLock");
   try {
-    if (fs.existsSync(lockFile)) {
-      fs.rmSync(lockFile, { force: true });
-      logger.info(`[${companyId}] Archivo de bloqueo eliminado`);
-    }
-  } catch {}
-
-  const crashpad = path.join(userDataDir, "Crashpad");
-  try {
-    if (fs.existsSync(crashpad)) {
-      fs.rmSync(crashpad, { recursive: true, force: true });
-      logger.info(`[${companyId}] Carpeta Crashpad eliminada`);
-    }
-  } catch {}
-
-  // ===== 3. ESPERAR UN MOMENTO =====
-  await setTimeout(2000);
-
-  logger.info(`[${companyId}] Browser limpiado y desbloqueado`);
-}
-
-async function forceKillChromeProcesses(companyId) {
-  const platform = os.platform();
-  const sessionFolder = companyFolder(companyId);
-  const userDataDir = path.join(sessionFolder, companyId);
-
-  logger.info(`[${companyId}] TERMINANDO PROCESOS DE CHROME ...`);
-
-  if (platform === "win32") {
-    // Buscar TODOS los procesos Chrome relacionados
-    try {
-      // Usar taskkill con filtro por nombre de ventana (funciona en Windows)
-      execSync(`taskkill /F /FI "WINDOWTITLE eq *${companyId}*"`, {
-        stdio: "ignore",
-      });
-
-      // También matar por imagen (todos los chrome, pero filtramos después)
-      execSync(`taskkill /F /IM chrome.exe`, { stdio: "ignore" });
-
-      logger.info(`[${companyId}] Procesos Chrome terminados en Windows`);
-    } catch (e) {}
-  } else {
-    // Linux
-    try {
-      execSync(`pkill -f "${userDataDir}"`, { stdio: "ignore" });
-      execSync(`pkill -f "${companyId}"`, { stdio: "ignore" });
-      execSync(`pkill -f chrome`, { stdio: "ignore" });
-    } catch (e) {}
+    // eliminar locks
+    // const lockFile = path.join(userDataDir, "SingletonLock");
+    // if (fs.existsSync(lockFile)) fs.rmSync(lockFile, { force: true });
+    // // crashpad
+    // const crashpad = path.join(userDataDir, "Crashpad");
+    // if (fs.existsSync(crashpad)) {
+    //   fs.rmSync(crashpad, { recursive: true, force: true });
+    // }
+    // matar procesos zombie
+    // solo limpieza de locks locales
+    // if (os.platform() === "win32") {
+    //   execSync(`taskkill /F /IM chrome.exe /T`, { stdio: "ignore" });
+    // } else {
+    //   execSync(`pkill -9 -f chrome`, { stdio: "ignore" });
+    //   execSync(`pkill -9 -f chromium`, { stdio: "ignore" });
+    // }
+  } catch (err) {
+    logger.warn(`[${companyId}] killOldBrowser error: ${err.message}`);
+  }
+  if (hadClient) {
+    await sleep(2000);
   }
 }
 async function forceCleanSession(companyId) {
   try {
-  logger.info(`[${companyId}] LIMPIEZA FORZADA INICIADA (MODO EXTREMO)`);
+    logger.warn(`[${companyId}] Limpieza de sesión`);
+    const status = statusByCompany[companyId];
+    const sessionDir = companyFolder(companyId);
 
-  const platform = os.platform();
-  const sessionFolder = companyFolder(companyId);
+    await safeCloseClient(companyId);
+    await sleep(2000); // clave para evitar EBUSY
 
-  // 1. PREVENIR MÁS EVENTOS 
-    if (clients[companyId]) {
+    if (["QR_FAILED", "AUTH_FAILURE"].includes(status)) {
       try {
-        // Remover todos los listeners para evitar que se disparen más eventos
-        if (clients[companyId].removeAllListeners) {
-          clients[companyId].removeAllListeners();
-        }
-        
-        // Cerrar el cliente en segundo plano y capturar cualquier error
-        clients[companyId].close().catch(e => {
-          logger.debug(`[${companyId}] Error esperado al cerrar: ${e.message}`);
-        });
-      } catch (e) {
-        logger.debug(`[${companyId}] Error al cerrar cliente: ${e.message}`);
-      }
-      
-      // Eliminar referencia después de un tiempo
-      setTimeout(() => {
-        delete clients[companyId];
-      }, 1000);
+        fs.removeSync(sessionDir);
+        logger.info(
+          `[${companyId}] Carpeta de sesión eliminada por estado crítico`,
+        );
+      } catch {}
     }
 
-  // 2. MATAR PROCESOS (con manejo de errores)
-    logger.info(`[${companyId}] MATANDO TODOS LOS PROCESOS...`);
-    try {
-      if (platform === "win32") {
-        execSync(`taskkill /F /IM chrome.exe /T`, { stdio: 'ignore' });
-      } else {
-        execSync(`pkill -9 chrome`, { stdio: 'ignore' });
-      }
-    } catch (e) {}
-
-  // ===== 3. ESPERAR QUE LOS PROCESOS MUERAN =====
-   await setTimeout(3000);
-
-  // 4. ELIMINAR CARPETA
-    try {
-      if (fs.existsSync(sessionFolder)) {
-        fs.removeSync(sessionFolder);
-        logger.info(`[${companyId}] Carpeta eliminada`);
-      }
-    } catch (e) {
-      logger.warn(`[${companyId}] Error eliminando carpeta: ${e.message}`);
-    }
-
-  // 5. LIMPIAR ESTADOS
+    delete clients[companyId];
     delete statusByCompany[companyId];
     delete qrByCompany[companyId];
     delete qrAttempts[companyId];
     delete reconnectState[companyId];
-    delete qrBlocked[companyId];
-    
-    logger.info(`[${companyId}] LIMPIEZA FORZADA COMPLETADA`);
-    
-  } catch (error) {
-    logger.error(`[${companyId}] Error en limpieza forzada: ${error.message}`);
+    delete statusMeta[companyId];
+
+    logger.info(`[${companyId}] Sesión limpia`);
+  } catch (err) {
+    creatingClients.delete(companyId);
+    logger.error(`[${companyId}] Error limpieza: ${err.message}`);
+  } finally {
+    creatingClients.delete(companyId);
   }
 }
-
 function scheduleReconnect(companyId) {
-  reconnectState[companyId] = reconnectState[companyId] || {
+  if (reconnectState[companyId]?.timerId) return;
+  if (creatingClients.has(companyId)) return;
+
+  const state = (reconnectState[companyId] ||= {
     attempts: 0,
     timerId: null,
-  };
-  const state = reconnectState[companyId];
-  state.attempts += 1;
+  });
+
+  state.lastAttempt = Date.now();
+  state.attempts++;
 
   if (state.attempts > RECONNECT_MAX_ATTEMPTS) {
     logger.warn(
       `[${companyId}] Máximo de reintentos alcanzado (${RECONNECT_MAX_ATTEMPTS})`,
     );
-    statusByCompany[companyId] = "RECONNECT_FAILED";
+    updateStatus(companyId, "RECONNECT_FAILED");
     return;
   }
 
@@ -204,6 +190,7 @@ function scheduleReconnect(companyId) {
   if (state.timerId) clearTimeout(state.timerId);
 
   state.timerId = setTimeout(async () => {
+    state.timerId = null;
     try {
       logger.info(`[${companyId}] Ejecutando reintento ${state.attempts}...`);
 
@@ -215,11 +202,13 @@ function scheduleReconnect(companyId) {
         delete clients[companyId];
       }
 
-      // Intentar recrear cliente
-      await createClient(companyId);
+      const success = await createClient(companyId)
+        .then(() => true)
+        .catch(() => false);
 
-      // Resetear contador si funciona
-      delete reconnectState[companyId];
+      if (success) {
+        delete reconnectState[companyId];
+      }
     } catch (err) {
       logger.error(
         `[${companyId}] Error en reintento ${state.attempts}: ${err.message}`,
@@ -232,7 +221,7 @@ function scheduleReconnect(companyId) {
           `[${companyId}] Máx reintentos alcanzados, marcando como SCAN_REQUIRED`,
         );
         qrByCompany[companyId] = null;
-        statusByCompany[companyId] = "SCAN_REQUIRED";
+        updateStatus(companyId, "SCAN_REQUIRED");
 
         const wh = readWebhookUrl(companyId);
         if (wh)
@@ -245,251 +234,172 @@ function scheduleReconnect(companyId) {
     }
   }, delay);
 }
+async function createClient(companyId, { isRestore = false } = {}) {
+  if (creatingClients.has(companyId)) {
+    logger.warn(`[${companyId}] createClient ya en progreso`);
+    return false;
+  }
+  creatingClients.add(companyId);
 
-async function createClient(companyId) {
-  ensureCompanyFolder(companyId);
-  logger.info(`[${companyId}] Creando WPPConnect client...`);
-
-  // Limpiar cualquier cliente existente
+  // ===== BLOQUEOS =====
   if (clients[companyId]) {
-    try {
-      await clients[companyId].close();
-    } catch {}
-    delete clients[companyId];
+    logger.warn(`[${companyId}] Cliente ya existe`);
+    creatingClients.delete(companyId);
+    return false;
   }
 
-  await killOldBrowser(companyId);
+  if (reconnectState[companyId]?.timerId) return false;
+
+  if (statusByCompany[companyId] === "QR_FAILED") {
+    logger.warn(`[${companyId}] Bloqueado por QR_FAILED`);
+    creatingClients.delete(companyId);
+    return false;
+  }
+
+  ensureCompanyFolder(companyId);
+  if (!isRestore) {
+    await killOldBrowser(companyId);
+  }
+
+  logger.info(`[${companyId}] Creando cliente...`);
 
   try {
-    const client = await wppconnect.create({
-      session: String(companyId),
-      folderNameToken: companyFolder(companyId),
-      autoClose: false,
-      headless: true,
-      useChrome: false,
-      puppeteerOptions: {
-        executablePath: puppeteerPath,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-web-security",
-          "--disable-features=IsolateOrigins,site-per-process",
-          "--disable-dev-shm-usage",
-        ],
-      },
-      catchQR: (base64Qr, asciiQR, attempt, urlCode) => {
-        const MAX_QR_ATTEMPTS = 5;
+    const client = await withTimeout(
+      wppconnect.create({
+        session: String(companyId),
+        folderNameToken: sessionsPath,
+        headless: true,
+        updatesLog: false,
+        autoClose: 141000, // 3 minutos
 
-        //  VALIDACIÓN
-        if (
-          attempt > MAX_QR_ATTEMPTS ||
-          statusByCompany[companyId] === "QR_FAILED"
-        ) {
-          // Si es la primera vez que detectamos el exceso, hacer limpieza
-          if (!qrBlocked[companyId] && attempt > MAX_QR_ATTEMPTS) {
-            qrBlocked[companyId] = true;
+        puppeteerOptions: {
+          executablePath: puppeteerPath,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+          ],
+        },
 
-            logger.error(
-              `[${companyId}] LÍMITE DE QR EXCEDIDO (${MAX_QR_ATTEMPTS}) - DETENIENDO`,
-            );
+        catchQR: (base64Qr, asciiQR, attempt) => {
+          qrAttempts[companyId] = attempt;
+          const MAX_QR_ATTEMPTS = 5;
 
-            // 1. Marcar como fallido
-            statusByCompany[companyId] = "QR_FAILED";
+          if (statusByCompany[companyId] === "QR_FAILED") return;
+
+          if (attempt > MAX_QR_ATTEMPTS) {
+            logger.error(`[${companyId}] QR_FAILED`);
+            updateStatus(companyId, "QR_FAILED");
             qrByCompany[companyId] = null;
-
-             // 2. SEGUNDO: Prevenir más eventos del cliente
-      if (clients[companyId]) {
-        try {
-          // Desconectar todos los listeners
-          clients[companyId].removeAllListeners?.();
-          // Cerrar sin esperar
-          clients[companyId].close().catch(() => {});
-        } catch (e) {}
-      }
-
-      // 3. TERCERO: Limpieza forzada (sin await para no bloquear)
-      forceCleanSession(companyId).catch(err => {
-        logger.error(`[${companyId}] Error en limpieza: ${err.message}`);
-      });
-    }
-    
-    return;
-  }
-
-        // QR normal
-        qrAttempts[companyId] = attempt;
-        logger.info(
-          `[${companyId}] QR generado (intento ${attempt}/${MAX_QR_ATTEMPTS})`,
-        );
-        qrByCompany[companyId] = base64Qr;
-        statusByCompany[companyId] = "SCAN_PENDING";
-
-        const wh = readWebhookUrl(companyId);
-        if (wh) {
-          webhookService.emitWebhook(wh, {
-            event: "qr",
-            companyId,
-            qr: base64Qr,
-            attempt,
-          });
-        }
-      },
-      statusFind: (statusSession) => {
-        // NO actualizar estado si ya está en QR_FAILED
-        if (statusByCompany[companyId] === "QR_FAILED") {
-          return;
-        }
-        logger.info(`[${companyId}] statusFind: ${statusSession}`);
-        statusByCompany[companyId] = statusSession;
-
-        const wh = readWebhookUrl(companyId);
-        if (wh) {
-          webhookService.emitWebhook(wh, {
-            event: "status",
-            companyId,
-            status: statusSession,
-          });
-        }
-      },
-      logQR: false,
-    });
-
-    // Configurar manejador de onMessage
-    try {
-      client.onMessage((msg) => {
-        if (statusByCompany[companyId] === "QR_FAILED") return;
-        logger.info(
-          `[${companyId}] Mensaje recibido de ${msg.from}: ${msg.body?.substring(0, 30)}...`,
-        );
-        const wh = readWebhookUrl(companyId);
-        if (wh) {
-          webhookService.emitWebhook(wh, {
-            event: "message",
-            companyId,
-            msg,
-          });
-        }
-      });
-    } catch (e) {
-      logger.warn(
-        `[${companyId}] client.onMessage no disponible: ${e.message}`,
-      );
-    }
-
-    // Configurar manejador de cambios de estado
-    try {
-      client.onStateChange(async (state) => {
-        if (statusByCompany[companyId] === "QR_FAILED") {
-          logger.info(`[${companyId}] Estado ignorado (QR_FAILED): ${state}`);
-          return;
-        }
-        logger.info(`[${companyId}] onStateChange: ${state}`);
-
-        const previousState = statusByCompany[companyId];
-        statusByCompany[companyId] = state;
-
-        // NO RECONECTAR SI ESTAMOS EN PROCESO DE LOGOUT
-        if (state === "UNPAIRED" || state === "browserClose") {
-          const isLoggingOut = logoutInProgress[companyId];
-          if (isLoggingOut) {
-            logger.info(
-              `[${companyId}] Logout en progreso, ignorando reconexión automática`,
-            );
+            forceCleanSession(companyId);
             return;
           }
-        }
 
-        // ===== MANEJO AUTOMÁTICO DE ESTADOS CRÍTICOS =====
-        const criticalStates = [
-          "browserClose",
-          "CLOSED",
-          "DISCONNECTED",
-          "UNPAIRED",
-          "TIMEOUT",
-        ];
+          logger.info(`[${companyId}] QR intento ${attempt}`);
+          qrByCompany[companyId] = base64Qr;
+          updateStatus(companyId, "SCAN_PENDING");
 
-        if (criticalStates.includes(state)) {
-          logger.warn(
-            `[${companyId}] Estado crítico detectado: ${state}. Iniciando reconexión...`,
-          );
-
-          // Limpiar cliente actual
-          if (clients[companyId]) {
-            try {
-              await clients[companyId].close();
-            } catch {}
-            delete clients[companyId];
+          const wh = readWebhookUrl(companyId);
+          if (wh) {
+            webhookService.emitWebhook(wh, {
+              event: "qr",
+              companyId,
+              qr: base64Qr,
+              attempt,
+            });
           }
+        },
+        statusFind: (status) => {
+          if (statusByCompany[companyId] === "QR_FAILED") return;
+          logger.info(`[${companyId}] status: ${status}`);
+          updateStatus(companyId, status);
+        },
+        logQR: false,
+      }),
+      180000,
+    );
+    // ===== EVENTOS =====
 
-          if (reconnectTimeouts[companyId]) {
-            clearTimeout(reconnectTimeouts[companyId]);
-          }
+    client.onStateChange(async (state) => {
+      if (statusByCompany[companyId] === "QR_FAILED") return;
+      logger.info(`[${companyId}] state: ${state}`);
 
-          reconnectTimeouts[companyId] = setTimeout(async () => {
-            try {
-              logger.info(
-                `[${companyId}] Ejecutando reconexión automática por estado: ${state}`,
-              );
-              await createClient(companyId);
-            } catch (error) {
-              logger.error(
-                `[${companyId}] Error en reconexión automática: ${error.message}`,
-              );
-              scheduleReconnect(companyId);
-            } finally {
-              delete reconnectTimeouts[companyId];
-            }
-          }, 3000);
+      const previousState = statusByCompany[companyId];
+      updateStatus(companyId, state);
 
-          return;
-        }
+      const connectedStates = ["CONNECTED", "inChat", "isLogged"];
 
-        // Manejo de estados de conexión normal
-        if (
-          state === "CONNECTED" ||
-          state === "inChat" ||
-          state === "isLogged"
-        ) {
-          logger.info(`[${companyId}] Sesión conectada exitosamente`);
-          delete reconnectState[companyId];
-          if (reconnectTimeouts[companyId]) {
-            clearTimeout(reconnectTimeouts[companyId]);
-            delete reconnectTimeouts[companyId];
-          }
-        }
+      if (connectedStates.includes(state)) {
+        let hostNumber = null;
 
-        // Webhook para cambios de estado
-        const wh = readWebhookUrl(companyId);
-        if (wh && previousState !== state) {
-          webhookService.emitWebhook(wh, {
-            event: "state_change",
-            companyId,
-            previousState,
-            currentState: state,
-          });
-        }
-      });
-    } catch (e) {
-      logger.warn(`[${companyId}] onStateChange no disponible: ${e.message}`);
-    }
+        try {
+          const wid = await client.getWid();
+          hostNumber = wid?.user || null;
+        } catch {}
+        logger.info(`[${companyId}] Número conectado: ${hostNumber}`);
+        logger.info(`[${companyId}] CONECTADO`);
+        delete reconnectState[companyId];
+        return;
+      }
+
+      const criticalStates = [
+        "DISCONNECTED",
+        "CLOSED",
+        "browserClose",
+        "UNPAIRED",
+      ];
+
+      if (criticalStates.includes(state)) {
+        logger.warn(`[${companyId}] Estado crítico: ${state}`);
+        await safeCloseClient(companyId);
+        scheduleReconnect(companyId);
+        return;
+      }
+
+      // webhook estado
+      const wh = readWebhookUrl(companyId);
+      if (wh && previousState !== state) {
+        webhookService.emitWebhook(wh, {
+          event: "state_change",
+          companyId,
+          previousState,
+          currentState: state,
+        });
+      }
+    });
+
+    client.onMessage((msg) => {
+      if (statusByCompany[companyId] === "QR_FAILED") return;
+
+      logger.info(`[${companyId}] Msg de ${msg.from}`);
+
+      const wh = readWebhookUrl(companyId);
+      if (wh) {
+        webhookService.emitWebhook(wh, {
+          event: "message",
+          companyId,
+          msg,
+        });
+      }
+    });
 
     clients[companyId] = client;
-
-    // Verificar conexión inicial
-    try {
-      const isConnected = await client.isConnected();
-      if (isConnected) {
-        statusByCompany[companyId] = "CONNECTED";
-        logger.info(`[${companyId}] Cliente conectado inicialmente`);
-      }
-    } catch (e) {}
-
-    logger.info(`[${companyId}] Cliente creado exitosamente`);
-    return client;
+    logger.info(`[${companyId}] Cliente listo`);
+    return true;
   } catch (error) {
+    if (statusByCompany[companyId] === "INITIALIZING") {
+      logger.warn(`[${companyId}] Ya inicializando`);
+      creatingClients.delete(companyId);
+      return;
+    }
     logger.error(`[${companyId}] Error creando cliente: ${error.message}`);
-    statusByCompany[companyId] = "ERROR";
+    await safeCloseClient(companyId);
+    updateStatus(companyId, "ERROR");
+    delete clients[companyId];
     throw error;
+  } finally {
+    sessionLocks.delete(companyId);
+    creatingClients.delete(companyId);
   }
 }
 
@@ -497,54 +407,65 @@ export async function initSession(companyId) {
   if (!companyId) throw new Error("companyId required");
 
   const cleanId = companyId.trim();
+  const currentStatus = statusByCompany[cleanId];
+  const now = Date.now();
 
-  // SI ESTÁ EN QR_FAILED, LIMPIAR TODO ANTES DE REINICIAR
-  if (statusByCompany[cleanId] === "QR_FAILED") {
-    logger.info(`[${cleanId}] Sesión en QR_FAILED, reiniciando...`);
-    await forceCleanSession(cleanId);
+  if (creatingClients.has(cleanId)) {
+    return { success: false, msg: "Already initializing" };
   }
-  ensureCompanyFolder(cleanId);
 
-  // Si ya existe cliente activo, no reiniciar
-  if (
-    clients[cleanId] &&
-    statusByCompany[cleanId] !== "browserClose" &&
-    statusByCompany[cleanId] !== "QR_FAILED"
-  ) {
-    logger.info(`[${cleanId}] Sesión ya existe y está activa`);
-    return { success: true, msg: "already active" };
+  // ===== LOCK =====
+  const lockTime = sessionLocks.get(cleanId);
+
+  if (lockTime && now - lockTime < SESSION_LOCK_TTL) {
+    logger.warn(`[${cleanId}] Lock activo`);
+    return { success: false, msg: "Session is initializing, try later" };
   }
-  // Si está en estado crítico, forzar recreación
-  if (
-    statusByCompany[cleanId] === "browserClose" ||
-    statusByCompany[cleanId] === "ERROR"
-  ) {
-    logger.info(`[${cleanId}] Estado crítico detectado, recreando cliente...`);
-    if (clients[cleanId]) {
-      try {
-        await clients[cleanId].close();
-      } catch {}
-      delete clients[cleanId];
+
+  sessionLocks.set(cleanId, now);
+
+  const activeSessions = Object.values(statusByCompany).filter((s) =>
+    ["CONNECTED", "inChat", "isLogged", "INITIALIZING"].includes(s),
+  );
+
+  try {
+    //  SI ESTADO ACTIVO → RETORNAR
+    if (
+      clients[cleanId] &&
+      !["browserClose", "ERROR", "QR_FAILED"].includes(currentStatus)
+    ) {
+      logger.info(`[${cleanId}] Sesión ya activa`);
+      return { success: true, msg: "already active" };
+    }
+    // ===== BLOQUEO POR QR FALLIDO =====
+    if (currentStatus === "QR_FAILED") {
+      logger.warn(`[${cleanId}] Limpiando por QR_FAILED`);
+      await forceCleanSession(cleanId);
+    }
+    // ===== SI ESTADO CRÍTICO → LIMPIAR =====
+    if (["browserClose", "ERROR"].includes(currentStatus)) {
+      logger.warn(`[${cleanId}] Estado crítico, cerrando cliente`);
+      await safeCloseClient(cleanId);
+    }
+    // ===== LIMITE DE SESIONES =====
+    if (Object.keys(clients).length >= MAX_SESSIONS) {
+      throw new Error("Max sessions reached");
     }
 
-    // Limpieza adicional para estados críticos
-    await forceCleanSession(cleanId);
-  }
-
-  // Marcar estado inicial
-  statusByCompany[cleanId] = "INITIALIZING";
-
-  // Lanzar proceso en background
-  createClient(cleanId)
-    .then(() => {
-      logger.info(`[${cleanId}] Inicialización completada`);
-    })
-    .catch((err) => {
-      logger.error(`[${cleanId}] Error creando cliente: ${err.message}`);
-      statusByCompany[cleanId] = "ERROR";
+    if (activeSessions.length >= MAX_SESSIONS) {
+      throw new Error("Max active sessions reached");
+    }
+    updateStatus(cleanId, "INITIALIZING");
+    // ===== CREAR CLIENTE =====
+    createClient(cleanId).catch((err) => {
+      logger.error(`[${cleanId}] Error init: ${err.message}`);
+      updateStatus(cleanId, "ERROR");
     });
 
-  return { success: true, msg: "initialization started" };
+    return { success: true, msg: "initializing" };
+  } finally {
+    setTimeout(() => sessionLocks.delete(cleanId), SESSION_LOCK_TTL);
+  }
 }
 
 export function getQR(companyId) {
@@ -560,61 +481,69 @@ export async function sendMessage({
   filePath,
   fileName,
 }) {
-  return new Promise((resolve, reject) => {
-    enqueue(companyId, async () => {
+  if (getQueueSize(companyId) > 1000) {
+    throw new Error("Queue overloaded, try later");
+  }
+  return enqueueMessage(companyId, async () => {
+    const client = clients[companyId];
+
+    if (!client) {
+      throw new Error("Session not active");
+    }
+
+    const status = statusByCompany[companyId];
+
+    const connectedStates = [
+      "CONNECTED",
+      "inChat",
+      "isLogged",
+      "NORMAL",
+      "MAIN",
+    ];
+
+    if (!connectedStates.includes(status)) {
+      throw new Error(`Session not connected (status: ${status})`);
+    }
+    if (reconnectState[companyId]?.timerId || creatingClients.has(companyId)) {
+      throw new Error("Session reconnecting, try later");
+    }
+
+    const results = [];
+
+    for (const number of numbers) {
       try {
-        const client = clients[companyId];
+        logger.info(`[${companyId}] Enviando mensaje a ${number}`);
 
-        if (!client) {
-          return reject(new Error("Session not active"));
+        let response;
+
+        if (filePath) {
+          response = await withTimeout(
+            client.sendFile(number, filePath, fileName || "file", text),
+            15000,
+          );
+        } else {
+          response = await withTimeout(client.sendText(number, text), 15000);
         }
 
-        // Verificar que la sesión está realmente conectada
-        const status = statusByCompany[companyId];
-        const connectedStates = [
-          "CONNECTED",
-          "inChat",
-          "isLogged",
-          "NORMAL",
-          "MAIN",
-        ];
-
-        if (!connectedStates.includes(status)) {
-          return reject(new Error(`Session not connected (status: ${status})`));
-        }
-
-        const results = [];
-
-        for (const number of numbers) {
-          logger.info(`[${companyId}] Enviando mensaje a ${number}`);
-
-          let response;
-          if (filePath) {
-            // Enviar con archivo
-            response = await client.sendFile(
-              number,
-              filePath,
-              fileName || "file",
-              text,
-            );
-          } else {
-            // Solo texto
-            response = await client.sendText(number, text);
-          }
-
-          results.push({
-            number,
-            success: true,
-            response,
-          });
-        }
-
-        resolve({ success: true, results });
+        results.push({
+          number,
+          success: true,
+          response,
+        });
       } catch (err) {
-        logger.error(`[${companyId}] Error en sendMessage: ${err.message}`);
-        reject(err);
+        logger.error(
+          `[${companyId}] Error enviando a ${number}: ${err.message}`,
+        );
+
+        results.push({
+          number,
+          success: false,
+          error: err.message,
+        });
       }
-    });
+    }
+
+    return { success: true, results };
   });
 }
 
@@ -641,14 +570,14 @@ export function getStatus(companyId) {
   return statusMap[status] || status;
 }
 
-export async function logout(companyId) {
-  console.log(`[${companyId}] Iniciando proceso de logout...`);
+export async function logout(companyId, { full = false } = {}) {
+  logger.info(`[${companyId}] Iniciando proceso de logout...`);
 
   const client = clients[companyId];
   const status = statusByCompany[companyId];
 
-  console.log(`[${companyId}] Estado actual:`, status);
-  console.log(`[${companyId}] Cliente existe:`, !!client);
+  logger.info(`[${companyId}] Estado actual:`, status);
+  logger.info(`[${companyId}] Cliente existe:`, !!client);
 
   // DESACTIVAR RECONEXIÓN AUTOMÁTICA ANTES DE HACER LOGOUT
   if (reconnectState[companyId]) {
@@ -656,11 +585,6 @@ export async function logout(companyId) {
       clearTimeout(reconnectState[companyId].timerId);
     }
     delete reconnectState[companyId];
-  }
-
-  if (reconnectTimeouts[companyId]) {
-    clearTimeout(reconnectTimeouts[companyId]);
-    delete reconnectTimeouts[companyId];
   }
 
   // Verificar que la sesión existe
@@ -678,6 +602,8 @@ export async function logout(companyId) {
   if (!client && (status === "notLogged" || status === "SCAN_PENDING")) {
     delete qrByCompany[companyId];
     delete statusByCompany[companyId];
+    delete statusMeta[companyId];
+    delete qrAttempts[companyId];
     logger.info(`[${companyId}] Sesión pendiente de QR eliminada`);
     return { success: true, msg: "Sesión pendiente eliminada" };
   }
@@ -719,6 +645,11 @@ export async function logout(companyId) {
   delete clients[companyId];
   delete qrByCompany[companyId];
   delete statusByCompany[companyId];
+  delete qrAttempts[companyId];
+  delete statusMeta[companyId];
+  if (full) {
+    await fs.remove(companyFolder(companyId));
+  }
 
   logger.info(`[${companyId}] Recursos liberados completamente`);
   return { success: true, msg: "Sesión cerrada" };
@@ -728,8 +659,10 @@ export async function restoreSessionsOnBoot() {
   if (!fs.existsSync(sessionsPath)) return;
 
   try {
-    exec("pkill -f chrome");
-    exec("pkill -f chromium");
+    if (process.env.NODE_ENV === "production") {
+      exec("pkill -f chrome");
+      exec("pkill -f chromium");
+    }
     logger.info("Procesos Chrome eliminados al iniciar");
   } catch (e) {}
 
@@ -772,28 +705,61 @@ export async function restoreSessionsOnBoot() {
     // Intentar restaurar la sesión
     try {
       logger.info(`[${companyId}] Restaurando...`);
-      await createClient(companyId);
-      logger.info(`[${companyId}] Restaurada exitosamente`);
+
+      const success = await createClient(companyId, { isRestore: true });
+
+      if (!success) {
+        throw new Error("No se pudo crear cliente");
+      }
+
+      await sleep(5000);
+
+      const client = clients[companyId];
+
+      if (!client) throw new Error("Cliente no disponible");
+
+      let retries = 0;
+      let state = null;
+
+      while (retries < 10) {
+        await sleep(2000);
+        state = await client.getConnectionState();
+
+        if (["CONNECTED", "MAIN", "inChat"].includes(state)) break;
+
+        retries++;
+      }
+
+      if (!["CONNECTED", "inChat", "isLogged", "MAIN"].includes(state)) {
+        updateStatus(companyId, "SCAN_REQUIRED");
+      }
+
+      logger.info(`[${companyId}] Restaurada correctamente`);
     } catch (e) {
       logger.error(`[${companyId}] Error restaurando: ${e.message}`);
-      // Si falla, eliminar la carpeta corrupta
+
       try {
         fs.removeSync(sessionFolder);
-        logger.info(`[${companyId}] Carpeta eliminada por error`);
-      } catch (err) {}
+      } catch {}
     }
   }
 }
 
+export function isSessionHealthy(companyId) {
+  const healthyStates = ["CONNECTED", "inChat", "isLogged"];
+  return (
+    clients[companyId] && healthyStates.includes(statusByCompany[companyId])
+  );
+}
 // Limpieza periódica de sesiones
 setInterval(
   () => {
     for (const [companyId, status] of Object.entries(statusByCompany)) {
+      const lastUpdate = statusMeta[companyId]?.lastUpdate || Date.now();
       // Limpiar sesiones desconectadas por más de 1 hora
       if (
-        status === "DISCONNECTED" ||
-        status === "CLOSED" ||
-        status === "RECONNECT_FAILED"
+        ["DISCONNECTED", "CLOSED", "RECONNECT_FAILED"].includes(status) &&
+        Date.now() - lastUpdate > 60 * 60 * 1000
       ) {
         logger.info(`[${companyId}] Limpiando sesión inactiva (${status})`);
 
@@ -806,12 +772,8 @@ setInterval(
 
         delete qrByCompany[companyId];
         delete statusByCompany[companyId];
+        delete statusMeta[companyId];
         delete reconnectState[companyId];
-
-        if (reconnectTimeouts[companyId]) {
-          clearTimeout(reconnectTimeouts[companyId]);
-          delete reconnectTimeouts[companyId];
-        }
       }
     }
   },
@@ -826,5 +788,5 @@ export default {
   logout,
   restoreSessionsOnBoot,
   clients,
-  _internal: { qrByCompany, statusByCompany, reconnectState },
+  _internal: { qrByCompany, updateStatus, reconnectState },
 };
