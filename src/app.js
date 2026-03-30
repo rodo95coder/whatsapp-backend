@@ -5,8 +5,14 @@ import { json, urlencoded } from 'express';
 import config from './config/env.js';
 import routes from './routes/index.js';
 import errorHandler from './middlewares/error.js';
+import rateLimit from 'express-rate-limit';
 
 const { clientMaxBodySize } = config;
+
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100
+});
 
 const app = express();
 
@@ -37,7 +43,7 @@ app.use(cors({
 
 app.use(json({ limit: clientMaxBodySize }));
 app.use(urlencoded({ extended: true }));
-
+app.use('/api', limiter);
 // Healthcheck simple
 app.get('/health', (req, res) => {
   res.json({

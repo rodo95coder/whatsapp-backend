@@ -31,21 +31,14 @@ export async function verifyNumber(req, res) {
 
 export async function sendBulk(req, res) {
   const { companyId, list, text } = req.body;
-
-  const results = [];
-
-  for (const num of list) {
-    const r = await sessionManager.sendMessage({
-      companyId,
-      numbers: [num],
-      text
-    });
-
-    results.push({
-      numero: num,
-      result: r
-    });
-  }
+  const promises = list.map(num =>
+  sessionManager.sendMessage({
+    companyId,
+    numbers: [num],
+    text
+  })
+  );
+  const results = await Promise.allSettled(promises);
 
   res.json({
     success: true,

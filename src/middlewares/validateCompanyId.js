@@ -1,42 +1,4 @@
-/* // src/middlewares/validateCompanyId.js
-export const validateCompanyId = (req, res, next) => {
-  // Para GET requests, priorizar params; para POST, priorizar body
-  let companyId;
-  
-  if (req.method === 'GET') {
-    companyId = req.params.companyId;
-  } else {
-    companyId = req.body.companyId || req.params.companyId;
-  }
-  
-  const errors = [];
-  
-  if (!companyId) {
-    errors.push("companyId es requerido");
-  } else if (typeof companyId !== 'string') {
-    errors.push("companyId debe ser un texto");
-  } else {
-    const trimmed = companyId.trim();
-    
-    if (trimmed === '') {
-      errors.push("companyId no puede estar vacío");
-    } else if (trimmed.length < 3) {
-      errors.push("companyId debe tener al menos 3 caracteres");
-    } else if (trimmed.length > 50) {
-      errors.push("companyId no puede exceder 50 caracteres");
-    } else if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
-      errors.push("companyId solo puede contener letras, números, guiones y underscores");
-    } else {
-      req.cleanCompanyId = trimmed;
-      return next();
-    }
-  }
-  
-  return res.status(400).json({
-    success: false,
-    errors
-  });
-}; */
+// src/middlewares/validateCompanyId.js
 
 export const validateCompanyId = (req, res, next) => {
   // SIEMPRE priorizar params si existen

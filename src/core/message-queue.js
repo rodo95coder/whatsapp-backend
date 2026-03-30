@@ -1,5 +1,5 @@
 // src/core/message-queue.js
-
+import logger from '../utils/logger.js';
 const queues = {};
 
 const DEFAULT_DELAY = 800;
@@ -19,14 +19,15 @@ export function enqueueMessage(companyId, handler) {
   const q = getQueue(companyId);
 
   if (q.queue.length >= MAX_QUEUE_SIZE) {
-    return Promise.reject(new Error('Queue overflow'));
+    return Promise.reject(new Error('Queue overflow - too many messages'));
   }
 
   return new Promise((resolve, reject) => {
     q.queue.push({
       handler,
       resolve,
-      reject
+      reject,
+        retries: 0
     });
 
     if (!q.processing) {
@@ -45,15 +46,32 @@ async function processQueue(companyId) {
     const job = q.queue.shift();
 
     try {
-      const result = await job.handler();
+      const result = await withTimeout(job.handler(), 15000);
       job.resolve(result);
+
       await delay(DEFAULT_DELAY);
+
     } catch (err) {
-      job.reject(err);
+      console.error(`[${companyId}] Job error:`, err.message);     
+
+      if (job.retries < 2) {
+        job.retries++;
+        q.queue.push(job);
+      } else {
+        job.reject(err);
+      }
     }
   }
-
   q.processing = false;
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Job timeout')), ms)
+    )
+  ]);
 }
 
 function delay(ms) {
