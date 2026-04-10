@@ -113,8 +113,7 @@ export const initSession = async (req, res) => {
     }
 
     const result = await withTimeout(
-      sessionManager.initSession(companyId),
-      20000
+      sessionManager.initSession(companyId)
     );
 
     return res.json(result);

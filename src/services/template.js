@@ -2,7 +2,7 @@
  * template.service.js
  * Generación simple de plantillas tipo Migo para envío homogéneo
  */
-
+//src/services/template.js
 export async function parseTemplate(templateKey, params = {}) {
   switch (templateKey) {
     case "SALUDO_BASICO":

@@ -38,18 +38,26 @@ const CRITICAL_STATES = ["DISCONNECTED", "CLOSED", "UNPAIRED", "browserClose"];
 function companyFolder(companyId) {
   return path.join(sessionsPath, String(companyId));
 }
-
 function ensureCompanyFolder(companyId) {
   const f = companyFolder(companyId);
   fs.ensureDirSync(f);
   return f;
 }
-
 function updateStatus(companyId, status) {
-  statusByCompany[companyId] = status;
-  statusMeta[companyId] = { status, lastUpdate: Date.now() };
-}
+  const normalized = normalizeStatus(status);
+  const current = statusByCompany[companyId];
 
+  // NO pisar PENDING_QR si ya hay QR
+  if (
+    current === "SCAN_PENDING" &&
+    ["DISCONNECTED", "browserClose"].includes(normalized)
+  ) {
+    logger.warn(`[${companyId}] Ignorando ${normalized} porque hay QR activo`);
+    return;
+  }
+  statusByCompany[companyId] = normalized;
+  statusMeta[companyId] = { status: normalized, lastUpdate: Date.now() };
+}
 function readWebhookUrl(companyId) {
   try {
     const cfg = fs.readJsonSync(
@@ -61,7 +69,25 @@ function readWebhookUrl(companyId) {
     return null;
   }
 }
+function normalizeStatus(status) {
+  const map = {
+    inChat: "CONNECTED",
+    isLogged: "CONNECTED",
+    MAIN: "CONNECTED",
+    NORMAL: "CONNECTED",
 
+    notLogged: "PENDING_QR",
+    QR_READ_SUCCESS: "PENDING_QR",
+    QR_READY: "PENDING_QR",
+    PAIRING: "PENDING_QR",
+
+    disconnectedMobile: "DISCONNECTED",
+    browserClose: "DISCONNECTED",
+    CLOSED: "DISCONNECTED"
+  };
+
+  return map[status] || status;
+}
 function clearSessionMemory(companyId) {
   delete clients[companyId];
   delete qrByCompany[companyId];
@@ -262,7 +288,7 @@ async function createClient(companyId, { isRestore = false } = {}) {
   }
 
   logger.info(`[${companyId}] Creando cliente...`);
-
+  const userDataDir = path.join(sessionsPath, companyId, 'chrome');
   try {
     const client = await withTimeout(
       wppconnect.create({
@@ -274,6 +300,7 @@ async function createClient(companyId, { isRestore = false } = {}) {
 
         puppeteerOptions: {
           executablePath: puppeteerPath,
+          userDataDir,
           args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -402,7 +429,6 @@ async function createClient(companyId, { isRestore = false } = {}) {
     creatingClients.delete(companyId);
   }
 }
-
 export async function initSession(companyId) {
   if (!companyId) throw new Error("companyId required");
 
@@ -467,13 +493,14 @@ export async function initSession(companyId) {
     setTimeout(() => sessionLocks.delete(cleanId), SESSION_LOCK_TTL);
   }
 }
-
 export function getQR(companyId) {
-  const s = statusByCompany[companyId];
-  if (!["SCAN_PENDING", "SCAN_REQUIRED", "notLogged"].includes(s)) return null;
+  const status = statusByCompany[companyId];
+
+  if (["CONNECTED", "inChat", "isLogged"].includes(status)) {
+    return null;
+  }
   return qrByCompany[companyId] || null;
 }
-
 export async function sendMessage({
   companyId,
   numbers,
@@ -546,8 +573,10 @@ export async function sendMessage({
     return { success: true, results };
   });
 }
-
 export function getStatus(companyId) {
+  if (qrByCompany[companyId]) {
+    return "PENDING_QR";
+  }
   const status = statusByCompany[companyId] || "NO_SESSION";
 
   // Mapeo de estados
@@ -569,7 +598,6 @@ export function getStatus(companyId) {
 
   return statusMap[status] || status;
 }
-
 export async function logout(companyId, { full = false } = {}) {
   logger.info(`[${companyId}] Iniciando proceso de logout...`);
 
@@ -654,7 +682,6 @@ export async function logout(companyId, { full = false } = {}) {
   logger.info(`[${companyId}] Recursos liberados completamente`);
   return { success: true, msg: "Sesión cerrada" };
 }
-
 export async function restoreSessionsOnBoot() {
   if (!fs.existsSync(sessionsPath)) return;
 
@@ -690,7 +717,7 @@ export async function restoreSessionsOnBoot() {
   for (const companyId of validSessions) {
     const sessionFolder = path.join(sessionsPath, companyId);
     const hasTokens =
-      fs.existsSync(path.join(sessionFolder, "Default")) ||
+      fs.existsSync(path.join(sessionFolder, "chrome", "Default")) ||
       fs.existsSync(path.join(sessionFolder, "session.data"));
 
     // Si no hay tokens válidos, eliminar
@@ -744,7 +771,6 @@ export async function restoreSessionsOnBoot() {
     }
   }
 }
-
 export function isSessionHealthy(companyId) {
   const healthyStates = ["CONNECTED", "inChat", "isLogged"];
   return (
@@ -778,8 +804,7 @@ setInterval(
     }
   },
   1000 * 60 * 60,
-); // Cada hora
-
+);
 export default {
   initSession,
   getQR,
