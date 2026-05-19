@@ -1,7 +1,7 @@
 // src/middlewares/error.js
 import logger from '../utils/logger.js';
 
-export default function errorHandler(err, req, res, next) {
+export default function errorHandler(err, req, res) {
   // logger debe exponer .error
   try {
     logger.error && logger.error(err.stack || err.message || String(err));

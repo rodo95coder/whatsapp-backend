@@ -1,9 +1,9 @@
 //utils/file-handler.js
 import multer from "multer";
-import { ENV } from "../config/env-config.js";
+import config from "../config/env.js";
 
 const storage = multer.diskStorage({
-  destination: ENV.TMP_MEDIA,
+  destination: config.tempPath,
   filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
 });
 

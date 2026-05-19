@@ -1,0 +1,32 @@
+$exclude = @(
+     "node_modules",
+     "userSessions",
+     "logs",
+     "temp",
+     ".git",
+     ".vscode"
+ )
+ 
+ $output = "estructura.txt"
+ 
+ if (Test-Path $output) {
+     Remove-Item $output
+ }
+ 
+ function Show-Tree($path, $indent = "") {
+ 
+     $items = Get-ChildItem $path | Where-Object {
+         $exclude -notcontains $_.Name
+     }
+ 
+     foreach ($item in $items) {
+ 
+         Add-Content $output "$indent|-- $($item.Name)"
+ 
+         if ($item.PSIsContainer) {
+             Show-Tree $item.FullName "$indent    "
+         }
+     }
+ }
+ 
+ Show-Tree "."

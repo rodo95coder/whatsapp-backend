@@ -17,7 +17,7 @@ export async function setWebhook(req, res) {
   if (!url) {
     return res.status(400).json({
       success: false,
-      msg: "Falta 'url'"
+      msg: "Falta 'url'",
     });
   }
 
@@ -29,7 +29,7 @@ export async function setWebhook(req, res) {
   return res.json({
     success: true,
     msg: "Webhook configurado",
-    url
+    url,
   });
 }
 
@@ -40,7 +40,7 @@ export async function getWebhook(req, res) {
   if (!(await fs.pathExists(file))) {
     return res.json({
       success: false,
-      msg: "Webhook no configurado"
+      msg: "Webhook no configurado",
     });
   }
 
@@ -48,6 +48,6 @@ export async function getWebhook(req, res) {
 
   return res.json({
     success: true,
-    url: data.url
+    url: data.url,
   });
 }

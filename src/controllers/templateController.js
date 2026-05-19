@@ -1,5 +1,5 @@
 // src/controllers/templateController.js
-import { sendMessage } from "../services/session.service.js";
+import { sendMessage } from "../services/message.service.js";
 import { parseTemplate } from "../services/template.js";
 
 export async function sendTemplate(req, res) {

@@ -5,8 +5,8 @@ import { parseTemplate } from "../services/template.js";
 export async function verifyNumber(req, res) {
   const { companyId, number } = req.body;
 
-  const client = sessionManager.clients[companyId];
-
+  const client = sessionManager.clients.get(companyId);
+  
   if (!client) {
     return res.status(400).json({
       success: false,

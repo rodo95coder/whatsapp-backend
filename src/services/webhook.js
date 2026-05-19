@@ -1,4 +1,9 @@
 // services/webhook.js
+import axios from 'axios';
+import logger from '../utils/logger.js';
+import config from '../config/env.js';
+
+const { webhookTimeoutMs } = config;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 
