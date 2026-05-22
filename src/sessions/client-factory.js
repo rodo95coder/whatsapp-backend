@@ -42,8 +42,15 @@ export async function createClient(companyId) {
         autoClose: config.qrTimeoutMs,
 
         puppeteerOptions: {
-          executablePath: puppeteerPath,
-          userDataDir,
+          headless: true,
+          executablePath: config.puppeteerPath || undefined,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-features=site-per-process",
+          ],
         },
 
         catchQR: async (base64Qr, asciiQR, attempt) => {
@@ -101,7 +108,7 @@ export async function createClient(companyId) {
         logger.warn(`[${companyId}] QR expirado`);
 
         setSessionState(companyId, "QRCODE_EXPIRED");
-        
+
         if (runtime.manualLogout || runtime.pendingFolderCleanup) {
           const { cleanupSessionFiles } =
             await import("./cleanup-session-files.js");
