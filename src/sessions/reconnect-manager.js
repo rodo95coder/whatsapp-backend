@@ -1,17 +1,12 @@
 // src/sessions/reconnect-manager.js
 
 import logger from "../utils/logger.js";
-
 import store from "./session-store.js";
-
 import { createClient } from "./client-factory.js";
-
 import { setSessionState } from "./session-state.js";
 
 const RECONNECT_MAX_ATTEMPTS = 5;
-
 const RECONNECT_BASE_DELAY_MS = 3000;
-
 const RECONNECT_MAX_DELAY_MS = 60000;
 
 export function scheduleReconnect(companyId) {
@@ -19,8 +14,9 @@ export function scheduleReconnect(companyId) {
   if (!runtime) {
     return;
   }
+  if (runtime.shutdown.hardStopped) return;
 
-  if (runtime.destroying) {
+  if (runtime.shutdown?.inProgress) {
     return;
   }
 
@@ -64,7 +60,11 @@ export function scheduleReconnect(companyId) {
       return;
     }
 
-    if (currentRuntime.destroying) {
+    if (currentRuntime.shutdown.hardStopped) {
+      return;
+    }
+
+    if (currentRuntime.shutdown.destroying) {
       return;
     }
 
@@ -76,12 +76,12 @@ export function scheduleReconnect(companyId) {
       const success = await createClient(companyId);
 
       if (!success) {
-        scheduleReconnect(companyId);
+        if (!runtime.shutdown?.inProgress) scheduleReconnect(companyId);
       }
     } catch (err) {
       logger.error(`[${companyId}] Error reconnect: ${err.message}`);
 
-      scheduleReconnect(companyId);
+      if (!runtime.shutdown?.inProgress) scheduleReconnect(companyId);
     }
   }, delay);
 }

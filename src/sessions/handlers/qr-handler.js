@@ -4,7 +4,7 @@ import logger from "../../utils/logger.js";
 import config from "../../config/env.js";
 import store from "../session-store.js";
 import { setSessionState } from "../session-state.js";
-import { resetSessionState } from "../session-lifecycle.js";
+import { shutdownSession } from "../session-shutdown-manager.js";
 
 const MAX_QR_ATTEMPTS = Number(config.maxQrAttempts || 2);
 
@@ -15,7 +15,7 @@ export async function handleQr({ companyId, base64Qr, generation }) {
     return;
   }
 
-  if (runtime.qrExpired) {
+  if (runtime.shutdown.qrExpired) {
     return;
   }
 
@@ -31,7 +31,7 @@ export async function handleQr({ companyId, base64Qr, generation }) {
     return;
   }
 
-  if (runtime.destroying) {
+  if (runtime.shutdown?.inProgress) {
     return;
   }
 
@@ -70,15 +70,12 @@ export async function handleQr({ companyId, base64Qr, generation }) {
   if (runtime.qrAttempts >= MAX_QR_ATTEMPTS) {
   logger.warn(`[${companyId}] Máximo QR alcanzado`);
 
-  runtime.qrExpired = true;
-  runtime.closed = true;
-
-  resetSessionState(companyId, {
-    destroySessionFolder: true,
-  }).catch((err) => {
-    logger.error(err.message);
+  await shutdownSession(companyId, {
+    reason: "QR_FAILED",
+    deleteFolder: true,
   });
 
   return;
-}
+
+  }
 }

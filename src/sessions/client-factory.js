@@ -10,6 +10,7 @@ import { safeCloseClient, resetSessionState } from "./session-lifecycle.js";
 import { setSessionState, setEngineState } from "./session-state.js";
 import { handleQr } from "./handlers/qr-handler.js";
 import { registerSessionEvents } from "./session-events.js";
+import { shutdownSession } from "./session-shutdown-manager.js";
 
 const { sessionsPath, puppeteerPath } = config;
 
@@ -18,7 +19,7 @@ function validateRuntime(runtime, generation) {
     return false;
   }
 
-  if (runtime.destroying) {
+  if (runtime.shutdown?.inProgress) {
     return false;
   }
 
@@ -42,18 +43,15 @@ export async function createClient(companyId) {
     return false;
   }
 
-  if (runtime.destroying) {
-    logger.warn(`[${companyId}] createClient ignorado: destroying activo`);
+  if (runtime.shutdown?.inProgress) {
+    logger.warn(`[${companyId}] createClient ignorado: shutdown en progreso`);
 
     return false;
   }
 
   runtime.creating = true;
   runtime.manualLogout = false;
-
-  runtime.qrExpired = false;
-  runtime.closed = false;
-
+  runtime.shutdown.qrExpired = false;
   runtime.generation++;
 
   const generation = runtime.generation;
@@ -84,10 +82,12 @@ export async function createClient(companyId) {
 
     logger.info(`[${companyId}] Creando cliente`);
 
+    let internalBrowser = null;
+
     const client = await wppconnect.create({
       session: String(companyId),
       headless: true,
-      autoClose: 0,
+      autoClose: false,
       disableWelcome: true,
       disableSpins: true,
       updatesLog: false,
@@ -102,14 +102,15 @@ export async function createClient(companyId) {
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
         ],
+        browserInstance: async (browser, waPage) => {
+          internalBrowser = browser;
+
+          runtime.browser = browser;
+        },
       },
 
       catchQR: async (base64Qr, asciiQR, attempt) => {
         const currentRuntime = store.getRuntime(companyId);
-
-        if (currentRuntime?.closed) {
-          return;
-        }
 
         if (!validateRuntime(currentRuntime, generation)) {
           return;
@@ -124,21 +125,23 @@ export async function createClient(companyId) {
       },
 
       statusFind: async (status) => {
-        const currentRuntime = store.getRuntime(companyId);
-
-        if (runtime.closed) {
-          return;
-        }
-
-        if (status === "autocloseCalled" || status === "browserClose") {
+        /* if (status === "autocloseCalled" || status === "browserClose") {
           logger.warn(`[${companyId}] AutoClose detectado`);
 
-          await resetSessionState(companyId, {
-            destroySessionFolder: true,
+          setSessionState(companyId, "DISCONNECTED");
+
+          return;
+        } */
+        if (status === "autocloseCalled") {
+          await shutdownSession(companyId, {
+            reason: "AUTO_CLOSE",
+            deleteFolder: true,
           });
 
           return;
         }
+
+        const currentRuntime = store.getRuntime(companyId);
 
         if (!validateRuntime(currentRuntime, generation)) {
           return;
@@ -177,26 +180,20 @@ export async function createClient(companyId) {
     runtime.client = client;
 
     // =========================
-    // STORE BROWSER
-    // =========================
-    try {
-      const page = await client.page;
-
-      if (page?.browser) {
-        runtime.browser = page.browser();
-      }
-    } catch (err) {
-      logger.warn(`[${companyId}] Error capturando browser`);
-    }
-
-    // =========================
     // EVENTS
     // =========================
-    registerSessionEvents({
-      client,
-      companyId,
-      generation,
-    });
+    try {
+      registerSessionEvents({
+        client,
+        companyId,
+        generation,
+      });
+
+      runtime.listenersRegistered = true;
+    } catch (err) {
+      runtime.listenersRegistered = false;
+      throw err;
+    }
 
     runtime.initialized = true;
 

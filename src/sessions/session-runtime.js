@@ -38,7 +38,15 @@ export class SessionRuntime {
     this.destroying = false;
     this.initialized = false;
     this.manualLogout = false;
-
+    // =========================
+    // SHUTDOWN CONTROL
+    // =========================
+    this.shutdown = {
+      inProgress: false,
+      completed: false,
+      reason: null,
+      startedAt: null,
+    };
     // =========================
     // TOKENS
     // =========================
@@ -49,7 +57,6 @@ export class SessionRuntime {
     // ABORT
     // =========================
     this.abortController = null;
-    this.closed = false;
 
     // =========================
     // EVENTS

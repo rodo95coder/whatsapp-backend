@@ -24,12 +24,8 @@ function isRuntimeValid(runtime, generation) {
   if (!runtime) {
     return false;
   }
-
-  if (runtime.closed) {
-    return false;
-  }
-
-  if (runtime.destroying) {
+  
+  if (runtime.shutdown?.inProgress) {
     return false;
   }
 
@@ -49,8 +45,6 @@ export function registerSessionEvents({ client, companyId, generation }) {
   if (runtime.listenersRegistered) {
     return;
   }
-
-  runtime.listenersRegistered = true;
 
   client.onStateChange(async (state) => {
     const currentRuntime = store.getRuntime(companyId);

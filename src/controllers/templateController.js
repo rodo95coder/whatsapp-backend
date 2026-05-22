@@ -1,5 +1,5 @@
 // src/controllers/templateController.js
-import { sendMessage } from "../services/message.service.js";
+
 import { parseTemplate } from "../services/template.js";
 
 export async function sendTemplate(req, res) {
@@ -15,11 +15,7 @@ export async function sendTemplate(req, res) {
 
   const text = await parseTemplate(templateKey, params);
 
-  const result = await sendMessage({
-    companyId,
-    numbers,
-    text
-  });
+ 
 
-  return res.json(result);
+  return res.json();
 }

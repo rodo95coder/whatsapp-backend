@@ -5,7 +5,8 @@ import store from "./session-store.js";
 import { exec } from "child_process";
 import logger from "../utils/logger.js";
 import { companyFolder } from "./session-files.js";
-import { setSessionState } from "./session-state.js";
+import { shutdownSession } from "./session-shutdown-manager.js";
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -14,27 +15,11 @@ function execAsync(command) {
     exec(command, () => resolve());
   });
 }
+
 async function killChromeProcesses() {
   try {
     await execAsync("taskkill /F /IM chrome.exe /T");
   } catch {}
-}
-
-async function waitForBrowserClosed(browser, timeoutMs = 15000) {
-  if (!browser) {
-    return;
-  }
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      if (!browser.isConnected()) {
-        return;
-      }
-    } catch {
-      return;
-    }
-    await delay(500);
-  }
 }
 
 export async function safeCloseClient(companyId) {
@@ -44,92 +29,91 @@ export async function safeCloseClient(companyId) {
     return;
   }
 
-  const client = runtime.client;
-
-  if (!client || typeof client.close !== "function") {
-    runtime.client = null;
+  if (runtime.closing) {
     return;
   }
+
+  runtime.closing = true;
+
+  const client = runtime.client;
+  const browser = runtime.browser;
 
   logger.warn(`[${companyId}] Cerrando cliente`);
 
   try {
-    // =========================
-    // REMOVE LISTENERS
-    // =========================
-    try {
-      client.removeAllListeners?.();
-    } catch {}
+    client?.removeAllListeners?.();
+  } catch {}
 
-    // =========================
-    // CLOSE CLIENT
-    // =========================
-    try {
-  const page = await client.page;
+  try {
+    await Promise.race([client?.close?.(), delay(10000)]);
+  } catch {}
 
-  const browser = page?.browser?.();
+  /**
+   * =========================
+   * CLOSE PAGES
+   * =========================
+   */
+  try {
+    if (browser?.pages) {
+      const pages = await browser.pages();
 
-  if (browser) {
-    const pages = await browser.pages();
-
-    for (const p of pages) {
-      try {
-        await p.close();
-      } catch {}
+      for (const page of pages) {
+        try {
+          await page.close();
+        } catch {}
+      }
     }
+  } catch {}
 
-    await browser.close();
-  }
-} catch (err) {
-  logger.warn(
-    `[${companyId}] browser close error: ${err.message}`,
-  );
-}
+  /**
+   * =========================
+   * CLOSE BROWSER
+   * =========================
+   */
+  try {
+    if (browser?.isConnected?.()) {
+      await Promise.race([browser.close(), delay(10000)]);
+    }
+  } catch {}
 
-    // =========================
-    // CLOSE BROWSER
-    // =========================
-    
+  /**
+   * =========================
+   * FORCE KILL PID
+   * =========================
+   */
+  try {
+    const process = browser?.process?.();
 
-    // =========================
-    // DISCONNECT
-    // =========================
-    try {
-      runtime.browser?.disconnect?.();
-    } catch {}
+    if (process?.pid) {
+      logger.warn(`[${companyId}] Killing chrome PID ${process.pid}`);
 
-    // =========================
-    // WAIT
-    // =========================
-    try {
-      await waitForBrowserClosed(runtime.browser);
-    } catch {}
+      process.kill("SIGKILL");
+    }
+  } catch {}
 
-    // =========================
-    // FORCE KILL
-    // =========================
-    
+  await delay(3000);
 
-    await waitForBrowserClosed(runtime.browser);
+  await killChromeProcesses();
 
-await delay(2000);
-  } finally {
-    runtime.client = null;
-    runtime.browser = null;
+  await delay(3000);
 
-    runtime.touch();
-  }
+  runtime.client = null;
+  runtime.browser = null;
+  runtime.closing = false;
+
+  runtime.touch();
 }
 
 export async function removeSessionFolder(companyId) {
   const folder = companyFolder(companyId);
+  await killChromeProcesses();
+
+  await delay(3000);
 
   await delay(2000);
 
   for (let i = 0; i < 10; i++) {
     try {
-      await killChromeProcesses();
-await delay(3000);
       if (await fs.pathExists(folder)) {
         await fs.remove(folder);
       }
@@ -154,63 +138,9 @@ export async function resetSessionState(
   companyId,
   { destroySessionFolder = false, clearQr = true } = {},
 ) {
-  const runtime = store.getRuntime(companyId);
-  if (!runtime) {
-    return;
-  }
-  if (runtime.destroying) {
-    logger.warn(`[${companyId}] Reset ignorado: destroy activo`);
-    return;
-  }
-  runtime.destroying = true;
-  runtime.generation++;
-  logger.warn(`[${companyId}] Reset completo de sesión`);
-  try {
-    setSessionState(companyId, "STOPPING");
-    // =========================
-    //  RECONNECT TIMER //
-    // =========================
-    if (runtime.reconnectTimer) {
-      clearTimeout(runtime.reconnectTimer);
-      runtime.reconnectTimer = null;
-    }
-    // =========================
-    //  ABORT //
-    // =========================
-    if (runtime.abortController) {
-      runtime.abortController.abort();
-      runtime.abortController = null;
-      runtime.closed = true;
-    }
-    // =========================
-    //
-    // CLOSE CLIENT
-    //  =========================
-    await safeCloseClient(companyId);
-    // =========================
-    // QR //
-    // =========================
-    if (clearQr) {
-      runtime.qr = null;
-      runtime.qrAttempts = 0;
-      runtime.lastQr = null;
-    }
-    // =========================
-    //  FLAGS //
-    //  =========================
-    runtime.creating = false;
-    runtime.listenersRegistered = false;
-    runtime.initialized = false;
-    // =========================
-    //  DELETE SESSION
-    //  =========================
-    if (destroySessionFolder) {
-      await delay(5000);
-      await removeSessionFolder(companyId);
-    }
-    setSessionState(companyId, "IDLE");
-  } finally {
-    runtime.destroying = false;
-    runtime.touch();
-  }
+  return shutdownSession(companyId, {
+    reason: "RESET",
+    deleteFolder: destroySessionFolder,
+    clearQr,
+  });
 }

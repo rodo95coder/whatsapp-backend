@@ -1,16 +1,12 @@
 // src/sessions/restore-manager.js
 
 import fs from "fs-extra";
-
 import path from "path";
-
 import { setTimeout as sleep } from "timers/promises";
-
 import logger from "../utils/logger.js";
-
 import config from "../config/env.js";
-
 import { createClient } from "./client-factory.js";
+import store from "./session-store.js";
 
 const { sessionsPath } = config;
 
@@ -30,6 +26,12 @@ export async function restoreSessionsOnBoot() {
 
   for (const companyId of folders) {
     try {
+      const runtime = store.createRuntime(companyId);
+
+      if (runtime.shutdown?.inProgress) {
+        continue;
+      }
+
       const sessionFolder = path.join(sessionsPath, companyId);
 
       const hasTokens =
@@ -38,7 +40,6 @@ export async function restoreSessionsOnBoot() {
 
       if (!hasTokens) {
         logger.warn(`[${companyId}] Tokens inválidos`);
-
         continue;
       }
 
@@ -49,8 +50,11 @@ export async function restoreSessionsOnBoot() {
       });
 
       await sleep(3000);
+
     } catch (err) {
-      logger.error(`[${companyId}] Error restaurando: ${err.message}`);
+      logger.error(
+        `[${companyId}] Error restaurando: ${err.message}`
+      );
     }
   }
 }

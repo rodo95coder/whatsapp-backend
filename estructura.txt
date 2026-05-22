@@ -1,0 +1,65 @@
+|-- nginx
+    |-- whatsapp-backend.conf
+|-- src
+    |-- config
+        |-- env.js
+        |-- security-config.js
+    |-- controllers
+        |-- extraController.js
+        |-- templateController.js
+        |-- webhookController.js
+        |-- whatsappController.js
+    |-- core
+        |-- session-operation-queue.js
+    |-- middlewares
+        |-- error.js
+        |-- validateCompanyId.js
+        |-- validateToken.js
+    |-- routes
+        |-- extra.js
+        |-- index.js
+        |-- templateRoutes.js
+        |-- webhookRoutes.js
+        |-- whatsappRoutes.js
+    |-- services
+        |-- message
+            |-- message-file-handler.js
+            |-- message-utils.js
+            |-- message-validator.js
+        |-- file.js
+        |-- message.service.js
+        |-- session.service.js
+        |-- template.js
+        |-- webhook.js
+        |-- whatsapp.service.js
+    |-- sessions
+        |-- handlers
+            |-- qr-handler.js
+        |-- client-factory.js
+        |-- reconnect-manager.js
+        |-- restore-manager.js
+        |-- session-cleanup.js
+        |-- session-constants.js
+        |-- session-events.js
+        |-- session-files.js
+        |-- session-health.js
+        |-- session-lifecycle.js
+        |-- session-runtime.js
+        |-- session-shutdown-manager.js
+        |-- session-state.js
+        |-- session-store.js
+    |-- templates
+    |-- utils
+        |-- file-handler.js
+        |-- logger.js
+        |-- timeout.js
+    |-- app.js
+|-- .env
+|-- .eslintrc.json
+|-- .gitignore
+|-- comandos.txt
+|-- ecosystem.config.js
+|-- index.js
+|-- package-lock.json
+|-- package.json
+|-- README.md
