@@ -3,7 +3,6 @@
 |-- src
     |-- config
         |-- env.js
-        |-- security-config.js
     |-- controllers
         |-- extraController.js
         |-- templateController.js
@@ -24,10 +23,10 @@
     |-- services
         |-- message
             |-- message-file-handler.js
+            |-- message-sender.js
             |-- message-utils.js
             |-- message-validator.js
         |-- file.js
-        |-- message.service.js
         |-- session.service.js
         |-- template.js
         |-- webhook.js
@@ -35,14 +34,13 @@
     |-- sessions
         |-- handlers
             |-- qr-handler.js
+        |-- cleanup-session-files.js
         |-- client-factory.js
         |-- reconnect-manager.js
         |-- restore-manager.js
-        |-- session-cleanup.js
         |-- session-constants.js
         |-- session-events.js
         |-- session-files.js
-        |-- session-health.js
         |-- session-lifecycle.js
         |-- session-runtime.js
         |-- session-shutdown-manager.js

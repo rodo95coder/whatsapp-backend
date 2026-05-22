@@ -4,34 +4,33 @@ import PQueue from "p-queue";
 
 const queues = new Map();
 
+function createQueue() {
+  return new PQueue({
+    concurrency: 1,
+  });
+}
+
 function getQueue(companyId) {
   if (!queues.has(companyId)) {
-    queues.set(
-      companyId,
-      new PQueue({
-        concurrency: 1,
-      })
-    );
+    queues.set(companyId, createQueue());
   }
 
   return queues.get(companyId);
 }
 
-export async function enqueueSessionOperation(
-  companyId,
-  task
-) {
+export async function enqueueSessionOperation(companyId, task) {
   const queue = getQueue(companyId);
 
   return queue.add(task);
 }
 
-export async function clearSessionQueue(companyId) {
+export function getQueueSize(companyId) {
   const queue = queues.get(companyId);
 
-  if (!queue) return;
+  if (!queue) {
+    return 0;
+  }
 
-  queue.clear();
-
-  queues.delete(companyId);
+  return queue.size;
 }
+

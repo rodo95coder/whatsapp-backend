@@ -5,8 +5,10 @@ import path from "path";
 import { setTimeout as sleep } from "timers/promises";
 import logger from "../utils/logger.js";
 import config from "../config/env.js";
-import { createClient } from "./client-factory.js";
 import store from "./session-store.js";
+import { createClient } from "./client-factory.js";
+import { isValidCompanyId } from "../utils/company-id.js";
+import { hasSessionReadyMarker } from "./session-ready.js";
 
 const { sessionsPath } = config;
 
@@ -16,9 +18,7 @@ export async function restoreSessionsOnBoot() {
   }
 
   const folders = fs
-    .readdirSync(sessionsPath, {
-      withFileTypes: true,
-    })
+    .readdirSync(sessionsPath, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
 
@@ -26,35 +26,41 @@ export async function restoreSessionsOnBoot() {
 
   for (const companyId of folders) {
     try {
-      const runtime = store.createRuntime(companyId);
+      if (!isValidCompanyId(companyId)) {
+        logger.warn(`[${companyId}] Carpeta inválida`);
+        continue;
+      }
 
-      if (runtime.shutdown?.inProgress) {
+      const runtime = store.getRuntime(companyId);
+
+      if (runtime?.client || runtime?.creating) {
         continue;
       }
 
       const sessionFolder = path.join(sessionsPath, companyId);
+      const chromeFolder = path.join(sessionFolder, "chrome");
+      const hasReadyMarker = await hasSessionReadyMarker(companyId);
 
-      const hasTokens =
-        fs.existsSync(path.join(sessionFolder, "chrome")) ||
-        fs.existsSync(path.join(sessionFolder, "session.data"));
+      if (!fs.existsSync(chromeFolder)) {
+        logger.warn(`[${companyId}] Chrome profile no existe`);
+        continue;
+      }
 
-      if (!hasTokens) {
-        logger.warn(`[${companyId}] Tokens inválidos`);
+      if (!hasReadyMarker) {
+        logger.warn(`[${companyId}] Sesión no autenticada, no se restaura`);
+
         continue;
       }
 
       logger.info(`[${companyId}] Restaurando sesión`);
 
-      await createClient(companyId, {
-        isRestore: true,
-      });
+      await createClient(companyId);
 
       await sleep(3000);
-
     } catch (err) {
-      logger.error(
-        `[${companyId}] Error restaurando: ${err.message}`
-      );
+      logger.error(`[${companyId}] Error restaurando: ${err.message}`);
     }
   }
+
+  logger.info("Restore finalizado");
 }

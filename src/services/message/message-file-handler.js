@@ -1,36 +1,79 @@
 // src/services/message/message-file-handler.js
 
-import fs from "fs";
-import fileService from "../services/file.js";
+import fs from "fs/promises";
+import path from "path";
+import fileService from "../file.js";
 
-export async function prepareMessageFile(base64File, fileName, req) {
-  const companyId = req.cleanCompanyId;
-  const { fileUrl } = req.body;
+export async function prepareMessageFile({
+  companyId,
+  base64File,
+  fileUrl,
+  fileName,
+}) {
   let filePath = null;
-  if (!base64File || !fileName) {
-    throw new Error("base64File y fileName son requeridos");
+
+  if (!fileName) {
+    throw new Error("fileName requerido");
   }
 
-  // Procesar archivo si existe
-  if (base64File && fileName) {
-    filePath = await fileService.saveBase64ToFile(base64File, fileName);
-    console.log(`[${companyId}] Archivo guardado:`, filePath);
-  } else if (fileUrl && fileName) {
-    filePath = await fileService.downloadToFile(fileUrl, fileName);
-    console.log(`[${companyId}] Archivo descargado:`, filePath);
+  // =========================
+  // BASE64
+  // =========================
+
+  if (base64File) {
+    filePath = await fileService.saveBase64ToFile(
+      base64File,
+      fileName,
+    );
+
+    console.log(
+      `[${companyId}] Archivo base64 guardado`,
+    );
+
+    return filePath;
   }
-  return filePath;
+
+  // =========================
+  // URL
+  // =========================
+
+  if (fileUrl) {
+    filePath = await fileService.downloadToFile(
+      fileUrl,
+      fileName,
+    );
+
+    console.log(
+      `[${companyId}] Archivo descargado`,
+    );
+
+    return filePath;
+  }
+
+  throw new Error(
+    "Debe proporcionar base64File o fileUrl",
+  );
 }
 
-export function cleanupTempFile(filePath, companyId) {
-  if (filePath) {
-    try {
-      fs.unlinkSync(filePath);
-      console.log(`[${companyId}] Archivo temporal eliminado: ${filePath}`);
-    } catch (error) {
-      console.warn(
-        `[${companyId}] No se pudo eliminar archivo temporal: ${error.message}`,
-      );
-    }
+export async function cleanupTempFile(
+  filePath,
+  companyId,
+) {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    await fs.unlink(filePath);
+
+    console.log(
+      `[${companyId}] Archivo temporal eliminado`,
+    );
+
+  } catch (err) {
+
+    console.warn(
+      `[${companyId}] Error eliminando archivo temporal: ${err.message}`,
+    );
   }
 }

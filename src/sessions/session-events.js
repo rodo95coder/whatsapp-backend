@@ -1,105 +1,87 @@
 // src/sessions/session-events.js
 
+import fs from "fs-extra";
+import path from "path";
+
 import logger from "../utils/logger.js";
+import config from "../config/env.js";
+
 import store from "./session-store.js";
-import { setSessionState, setEngineState } from "./session-state.js";
 import { scheduleReconnect } from "./reconnect-manager.js";
+import { setSessionState } from "./session-state.js";
 
-const CONNECTED_ENGINE_STATES = [
-  "CONNECTED",
-  "MAIN",
-  "NORMAL",
-  "inChat",
-  "isLogged",
-];
-
-const CRITICAL_ENGINE_STATES = [
-  "DISCONNECTED",
-  "UNPAIRED",
-  "browserClose",
-  "CLOSED",
-];
-
-function isRuntimeValid(runtime, generation) {
-  if (!runtime) {
-    return false;
-  }
-  
-  if (runtime.shutdown?.inProgress) {
-    return false;
-  }
-
-  if (runtime.generation !== generation) {
-    return false;
-  }
-
-  return true;
+function sessionReadyFile(companyId) {
+  return path.join(config.sessionsPath, companyId, "session-ready.json");
 }
-export function registerSessionEvents({ client, companyId, generation }) {
+
+async function markSessionReady(companyId) {
+  await fs.ensureDir(path.join(config.sessionsPath, companyId));
+
+  await fs.writeJson(
+    sessionReadyFile(companyId),
+    {
+      companyId,
+      connectedAt: new Date().toISOString(),
+    },
+    { spaces: 2 },
+  );
+}
+
+export function registerSessionEvents({ client, companyId }) {
   const runtime = store.getRuntime(companyId);
 
   if (!runtime) {
     return;
   }
 
-  if (runtime.listenersRegistered) {
-    return;
-  }
-
   client.onStateChange(async (state) => {
     const currentRuntime = store.getRuntime(companyId);
-
-    if (!isRuntimeValid(currentRuntime, generation)) {
+    if (!currentRuntime) {
       return;
     }
 
     logger.info(`[${companyId}] onStateChange => ${state}`);
 
-    setEngineState(companyId, state);
+    currentRuntime.engineState = state;
 
-    // =========================
-    // CONNECTED
-    // =========================
-    if (CONNECTED_ENGINE_STATES.includes(state)) {
-      currentRuntime.reconnectAttempts = 0;
-      currentRuntime.qrAttempts = 0;
-      currentRuntime.qr = null;
+    switch (state) {
+      case "CONNECTED":
+      case "MAIN":
+      case "NORMAL":
+      case "inChat":
+      case "isLogged":
+        currentRuntime.reconnectAttempts = 0;
+        currentRuntime.qr = null;
+        currentRuntime.qrAttempts = 0;
 
-      setSessionState(companyId, "CONNECTED");
+        await markSessionReady(companyId);
+        setSessionState(companyId, "CONNECTED");
+        break;
 
-      return;
-    }
+      case "QR_READY":
+      case "notLogged":
+        setSessionState(companyId, "WAITING_QR");
+        break;
 
-    // =========================
-    // WAITING QR
-    // =========================
-    if (state === "QR_READY" || state === "notLogged") {
-      setSessionState(companyId, "WAITING_QR");
+      case "DISCONNECTED":
+      case "UNPAIRED":
+      case "browserClose":
+      case "CLOSED":
+        setSessionState(companyId, "DISCONNECTED");
 
-      return;
-    }
+        if (!currentRuntime.manualLogout) {
+          scheduleReconnect(companyId);
+        }
 
-    // =========================
-    // CRITICAL
-    // =========================
-    if (CRITICAL_ENGINE_STATES.includes(state)) {
-      logger.warn(`[${companyId}] Estado crítico detectado: ${state}`);
-
-      setSessionState(companyId, "DISCONNECTED");
-
-      if (!currentRuntime.manualLogout) {
-        scheduleReconnect(companyId);
-      }
+        break;
     }
   });
 
   client.onMessage(() => {
     const currentRuntime = store.getRuntime(companyId);
-
-    if (!isRuntimeValid(currentRuntime, generation)) {
+    if (!currentRuntime) {
       return;
     }
-
     currentRuntime.touch();
   });
 }

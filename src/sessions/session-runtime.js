@@ -1,78 +1,25 @@
-// src/sessions/session-runtime.js
-
 export class SessionRuntime {
   constructor(companyId) {
     this.companyId = companyId;
 
-    // =========================
-    // CLIENT
-    // =========================
     this.client = null;
     this.browser = null;
-
-    // =========================
-    // STATE
-    // =========================
+    this.browserPid = null;
     this.state = "IDLE";
-    this.previousState = null;
-    this.engineState = null;
-
-    // =========================
-    // QR
-    // =========================
     this.qr = null;
     this.qrAttempts = 0;
-    this.lastQrAt = null;
-    this.lastQr = null;
-
-    // =========================
-    // RECONNECT
-    // =========================
     this.reconnectTimer = null;
     this.reconnectAttempts = 0;
-
-    // =========================
-    // LIFECYCLE
-    // =========================
     this.creating = false;
     this.destroying = false;
-    this.initialized = false;
     this.manualLogout = false;
-    // =========================
-    // SHUTDOWN CONTROL
-    // =========================
-    this.shutdown = {
-      inProgress: false,
-      completed: false,
-      reason: null,
-      startedAt: null,
-    };
-    // =========================
-    // TOKENS
-    // =========================
-    this.generation = 0;
-    this.operationId = null;
-
-    // =========================
-    // ABORT
-    // =========================
-    this.abortController = null;
-
-    // =========================
-    // EVENTS
-    // =========================
-    this.listenersRegistered = false;
-
-    // =========================
-    // METADATA
-    // =========================
-    this.createdAt = Date.now();
+    this.connectPromise = null;
     this.updatedAt = Date.now();
-    this.lastActivityAt = Date.now();
+    this.lastQrAt = null;
+    this.pendingFolderCleanup = false;
   }
 
   touch() {
     this.updatedAt = Date.now();
-    this.lastActivityAt = Date.now();
   }
 }

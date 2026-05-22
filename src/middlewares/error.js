@@ -1,12 +1,16 @@
 // src/middlewares/error.js
-import logger from '../utils/logger.js';
 
-export default function errorHandler(err, req, res) {
-  // logger debe exponer .error
-  try {
-    logger.error && logger.error(err.stack || err.message || String(err));
-  } catch (e) {
-    // ignore
+import logger from "../utils/logger.js";
+
+export default function errorHandler(err, req, res, next) {
+  logger.error(err?.stack || err?.message || String(err));
+
+  if (res.headersSent) {
+    return next(err);
   }
-  res.status(500).json({ success: false, msg: 'Internal Server Error' });
+
+  return res.status(500).json({
+    success: false,
+    message: "Internal Server Error",
+  });
 }

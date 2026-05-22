@@ -1,81 +1,40 @@
 // src/sessions/handlers/qr-handler.js
 
 import logger from "../../utils/logger.js";
-import config from "../../config/env.js";
 import store from "../session-store.js";
+import config from "../../config/env.js";
 import { setSessionState } from "../session-state.js";
-import { shutdownSession } from "../session-shutdown-manager.js";
 
-const MAX_QR_ATTEMPTS = Number(config.maxQrAttempts || 2);
+const { maxQrAttempts } = config;
 
-export async function handleQr({ companyId, base64Qr, generation }) {
+export async function handleQr({ companyId, base64Qr, attempt }) {
   const runtime = store.getRuntime(companyId);
 
   if (!runtime) {
     return;
   }
 
-  if (runtime.shutdown.qrExpired) {
+  if (runtime.destroying) {
     return;
   }
 
-  if (runtime.closed) {
+  if (runtime.state === "QRCODE_EXPIRED") {
     return;
   }
-
-  // =========================
-  // VALIDATIONS
-  // =========================
-
-  if (runtime.generation !== generation) {
-    return;
-  }
-
-  if (runtime.shutdown?.inProgress) {
-    return;
-  }
-
-  if (runtime.manualLogout) {
-    return;
-  }
-
-  // =========================
-  // IGNORAR QR DUPLICADO
-  // =========================
-
-  if (runtime.lastQr === base64Qr) {
-    return;
-  }
-
-  runtime.lastQr = base64Qr;
-
-  // =========================
-  // SAVE QR
-  // =========================
 
   runtime.qr = base64Qr;
+  runtime.qrAttempts = attempt;
+  runtime.lastQrAt = Date.now();
+  runtime.touch();
 
-  runtime.qrAttempts++;
+  setSessionState(companyId, "QRCODE");
 
-  logger.info(
-    `[${companyId}] Nuevo QR (${runtime.qrAttempts}/${MAX_QR_ATTEMPTS})`,
-  );
+  logger.info(`[${companyId}] QR attempt ${attempt}/${maxQrAttempts}`);
 
-  setSessionState(companyId, "WAITING_QR");
+  if (attempt >= maxQrAttempts) {
+    logger.warn(`[${companyId}] QR max attempts reached`);
 
-  // =========================
-  // MAX ATTEMPTS
-  // =========================
-
-  if (runtime.qrAttempts >= MAX_QR_ATTEMPTS) {
-  logger.warn(`[${companyId}] Máximo QR alcanzado`);
-
-  await shutdownSession(companyId, {
-    reason: "QR_FAILED",
-    deleteFolder: true,
-  });
-
-  return;
-
+    runtime.qr = null;
+    setSessionState(companyId, "QRCODE_EXPIRED");
   }
 }

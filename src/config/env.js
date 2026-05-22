@@ -1,125 +1,95 @@
 // src/config/env.js
+
+import fs from "fs-extra";
 import path from "path";
 import process from "process";
 
 const cwd = process.cwd();
 
-// =====================================
-// PATHS
-// =====================================
-const userSessionsPath =
-  process.env.SESSIONS_PATH || path.join(cwd, "userSessions");
+function toNumber(value, fallback) {
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : fallback;
+}
+
+function toBoolean(value, fallback = false) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  return value === "true";
+}
+
+const sessionsPath =
+  process.env.SESSIONS_PATH ||
+  path.join(cwd, "userSessions");
 
 const tempPath =
-  process.env.TEMP_PATH || path.join(cwd, "temp");
+  process.env.TEMP_PATH ||
+  path.join(cwd, "temp");
 
-// =====================================
-// CONFIG
-// =====================================
+fs.ensureDirSync(sessionsPath);
+fs.ensureDirSync(tempPath);
+fs.ensureDirSync(path.join(cwd, "logs"));
+
 const config = {
-  // =========================
-  // SERVER
-  // =========================
-  port: parseInt(process.env.PORT || "3000", 10),
+  nodeEnv:
+    process.env.NODE_ENV || "development",
 
-  // =========================
-  // AUTH
-  // =========================
+  port:
+    toNumber(process.env.PORT, 3000),
+
   globalToken:
-    process.env.GLOBAL_TOKEN || "TOKEN_MASTER_2025",
+    process.env.GLOBAL_TOKEN,
 
-  // =========================
-  // CHROME / PUPPETEER
-  // =========================
   puppeteerPath:
     process.env.PUPPETEER_EXECUTABLE_PATH || null,
 
-  // =========================
-  // SESSIONS
-  // =========================
-  sessionsPath: userSessionsPath,
+  sessionsPath,
 
-  multiSessionsFile:
-    process.env.MULTI_SESSION_FILE ||
-    path.join(userSessionsPath, "multi-client.json"),
-
-  // =========================
-  // MEDIA / TEMP
-  // =========================
   tempPath,
 
-  // =========================
-  // LOGS
-  // =========================
   logLevel:
     process.env.LOG_LEVEL || "info",
 
-  // =========================
-  // BODY LIMITS
-  // =========================
   clientMaxBodySize:
     process.env.CLIENT_MAX_BODY_SIZE || "50mb",
 
-  // =========================
-  // WEBHOOK
-  // =========================
-  webhookTimeoutMs: parseInt(
-    process.env.WEBHOOK_TIMEOUT_MS || "8000",
-    10
-  ),
+  webhookTimeoutMs:
+    toNumber(process.env.WEBHOOK_TIMEOUT_MS, 8000),
 
-  // =========================
-  // SESSION BEHAVIOR
-  // =========================
   autoReconnect:
-    process.env.AUTO_RECONNECT !== "false",
+    toBoolean(process.env.AUTO_RECONNECT, true),
 
   autoInitOnCrash:
-    process.env.AUTO_INIT_ON_CRASH !== "false",
+    toBoolean(process.env.AUTO_INIT_ON_CRASH, true),
 
-  // =========================
-  // QR
-  // =========================
-  maxQrAttempts: parseInt(
-    process.env.MAX_QR_ATTEMPTS || "2",
-    10
-  ),
+  maxQrAttempts:
+    toNumber(process.env.MAX_QR_ATTEMPTS, 20),
 
-  qrTimeoutMs: parseInt(
-    process.env.QR_TIMEOUT_MS || "180000",
-    10
-  ),
+  qrTimeoutMs:
+    toNumber(process.env.QR_TIMEOUT_MS, 180000),
 
-  // =========================
-  // TIMEOUTS
-  // =========================
-  sessionLockTtl: parseInt(
-    process.env.SESSION_LOCK_TTL || "15000",
-    10
-  ),
+  sessionLockTtl:
+    toNumber(process.env.SESSION_LOCK_TTL, 15000),
 
-  sendMessageTimeoutMs: parseInt(
-    process.env.SEND_MESSAGE_TIMEOUT_MS || "15000",
-    10
-  ),
+  sendMessageTimeoutMs:
+    toNumber(process.env.SEND_MESSAGE_TIMEOUT_MS, 15000),
 
-  initSessionTimeoutMs: parseInt(
-    process.env.INIT_SESSION_TIMEOUT_MS || "180000",
-    10
-  ),
+  initSessionTimeoutMs:
+    toNumber(process.env.INIT_SESSION_TIMEOUT_MS, 180000),
 
-  logoutTimeoutMs: parseInt(
-    process.env.LOGOUT_TIMEOUT_MS || "15000",
-    10
-  ),
+  logoutTimeoutMs:
+    toNumber(process.env.LOGOUT_TIMEOUT_MS, 15000),
 
-  // =========================
-  // QUEUES
-  // =========================
-  maxQueuePerSession: parseInt(
-    process.env.MAX_QUEUE_PER_SESSION || "1000",
-    10
-  ),
+  maxQueuePerSession:
+    toNumber(process.env.MAX_QUEUE_PER_SESSION, 1000),
 };
+
+if (!config.globalToken) {
+  throw new Error("GLOBAL_TOKEN is required");
+}
 
 export default config;

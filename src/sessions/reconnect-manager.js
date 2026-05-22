@@ -1,9 +1,10 @@
-// src/sessions/reconnect-manager.js
-
+//src/sessions/reconnect-manager.js
 import logger from "../utils/logger.js";
 import store from "./session-store.js";
 import { createClient } from "./client-factory.js";
 import { setSessionState } from "./session-state.js";
+import { destroyClient } from "./session-lifecycle.js";
+import { enqueueSessionOperation } from "../core/session-operation-queue.js";
 
 const RECONNECT_MAX_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 3000;
@@ -11,16 +12,12 @@ const RECONNECT_MAX_DELAY_MS = 60000;
 
 export function scheduleReconnect(companyId) {
   const runtime = store.getRuntime(companyId);
+
   if (!runtime) {
     return;
   }
-  if (runtime.shutdown.hardStopped) return;
 
-  if (runtime.shutdown?.inProgress) {
-    return;
-  }
-
-  if (runtime.creating) {
+  if (runtime.state === "CONNECTED") {
     return;
   }
 
@@ -52,36 +49,27 @@ export function scheduleReconnect(companyId) {
   setSessionState(companyId, "RECONNECTING");
 
   runtime.reconnectTimer = setTimeout(async () => {
-    runtime.reconnectTimer = null;
-
     const currentRuntime = store.getRuntime(companyId);
 
     if (!currentRuntime) {
       return;
     }
 
-    if (currentRuntime.shutdown.hardStopped) {
-      return;
-    }
+    currentRuntime.reconnectTimer = null;
 
-    if (currentRuntime.shutdown.destroying) {
-      return;
-    }
-
-    if (currentRuntime.manualLogout) {
+    if (currentRuntime.state === "CONNECTED") {
       return;
     }
 
     try {
-      const success = await createClient(companyId);
-
-      if (!success) {
-        if (!runtime.shutdown?.inProgress) scheduleReconnect(companyId);
-      }
+      await enqueueSessionOperation(companyId, async () => {
+        await destroyClient(companyId);
+        await createClient(companyId);
+      });
     } catch (err) {
       logger.error(`[${companyId}] Error reconnect: ${err.message}`);
 
-      if (!runtime.shutdown?.inProgress) scheduleReconnect(companyId);
+      scheduleReconnect(companyId);
     }
   }, delay);
 }
