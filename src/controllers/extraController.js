@@ -1,61 +1,111 @@
 // src/controllers/extraController.js
+
 import sessionManager from "../services/session.service.js";
 import { parseTemplate } from "../services/template.js";
+import logger from "../utils/logger.js";
 
 export async function verifyNumber(req, res) {
-  const { companyId, number } = req.body;
-
-  const client = sessionManager.clients[companyId];
-
-  if (!client) {
-    return res.status(400).json({
-      success: false,
-      msg: "Session not active"
-    });
-  }
-
   try {
+    const companyId = req.cleanCompanyId;
+    const { number } = req.body;
+
+    if (!number) {
+      return res.status(400).json({
+        success: false,
+        message: "number requerido",
+      });
+    }
+
+    const client = sessionManager.getClient(companyId);
+
+    if (!client) {
+      return res.status(400).json({
+        success: false,
+        message: "Session not active",
+      });
+    }
+
     const exists = await client.isRegisteredUser(number);
 
-    res.json({
+    return res.json({
       success: true,
-      exists
+      exists,
     });
-  } catch (e) {
-    res.status(500).json({
+
+  } catch (err) {
+    logger.error(
+      `[${req.cleanCompanyId}] verifyNumber: ${err.message}`,
+    );
+
+    return res.status(500).json({
       success: false,
-      msg: e.message
+      message: err.message,
     });
   }
 }
 
 export async function sendBulk(req, res) {
-  const { companyId, list, text } = req.body;
-  const promises = list.map(num =>
-  sessionManager.sendMessage({
-    companyId,
-    numbers: [num],
-    text
-  })
-  );
-  const results = await Promise.allSettled(promises);
+  try {
+    const companyId = req.cleanCompanyId;
+    const { list, text } = req.body;
 
-  res.json({
-    success: true,
-    results
-  });
+    if (!Array.isArray(list) || list.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "list debe ser array",
+      });
+    }
+
+    const result = await sessionManager.sendMessage({
+      companyId,
+      numbers: list,
+      text,
+    });
+
+    return res.json(result);
+
+  } catch (err) {
+    logger.error(
+      `[${req.cleanCompanyId}] sendBulk: ${err.message}`,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
 }
 
 export async function sendTemplate(req, res) {
-  const { companyId, number, templateKey, params } = req.body;
+  try {
+    const companyId = req.cleanCompanyId;
+    const { number, templateKey, params } = req.body;
 
-  const text = await parseTemplate(templateKey, params);
+    if (!number || !templateKey) {
+      return res.status(400).json({
+        success: false,
+        message: "number y templateKey requeridos",
+      });
+    }
 
-  const r = await sessionManager.sendMessage({
-    companyId,
-    numbers: [number],
-    text
-  });
+    const text = await parseTemplate(templateKey, params);
 
-  res.json(r);
+    const result = await sessionManager.sendMessage({
+      companyId,
+      numbers: [number],
+      text,
+    });
+
+    return res.json(result);
+
+  } catch (err) {
+    logger.error(
+      `[${req.cleanCompanyId}] sendTemplate: ${err.message}`,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
 }

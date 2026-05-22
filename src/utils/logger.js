@@ -1,62 +1,70 @@
 // src/utils/logger.js
+
+import fs from "fs-extra";
 import winston from "winston";
-import config from '../config/env.js';
+import config from "../config/env.js";
+
 const { logLevel } = config;
 
-const { combine, timestamp, printf, colorize } = winston.format;
+fs.ensureDirSync("logs");
 
-// Formato personalizado
-const myFormat = printf(({ level, message, timestamp }) => {
-  return `${timestamp} [${level.toUpperCase()}] ${message}`;
+const { combine, timestamp, printf, colorize, errors } = winston.format;
+
+const logFormat = printf(({ level, message, timestamp, stack }) => {
+  return `${timestamp} [${level.toUpperCase()}] ${stack || message}`;
 });
 
-// Crear UN solo logger (no dos como tenías)
 const logger = winston.createLogger({
-  level: logLevel || 'info',
+  level: logLevel || "info",
+
   format: combine(
-    timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    myFormat
+    errors({ stack: true }),
+    timestamp({
+      format: "YYYY-MM-DD HH:mm:ss",
+    }),
+    logFormat,
   ),
+
   transports: [
-    // Consola con colores
     new winston.transports.Console({
+      handleExceptions: true,
+
       format: combine(
         colorize(),
-        myFormat
-      )
+        timestamp({
+          format: "YYYY-MM-DD HH:mm:ss",
+        }),
+        logFormat,
+      ),
     }),
-    // Archivo para todos los logs
-    new winston.transports.File({ 
-      filename: 'logs/combined.log',
-      maxsize: 5242880, // 5MB
-      maxFiles: 5
-    }),
-    // Archivo solo para errores
+
     new winston.transports.File({
-      filename: 'logs/error.log',
-      level: 'error',
-      maxsize: 5242880,
-      maxFiles: 5
-    })
-  ]
+      filename: "logs/combined.log",
+      maxsize: 5 * 1024 * 1024,
+      maxFiles: 5,
+      handleExceptions: true,
+    }),
+
+    new winston.transports.File({
+      filename: "logs/error.log",
+      level: "error",
+      maxsize: 5 * 1024 * 1024,
+      maxFiles: 5,
+      handleExceptions: true,
+    }),
+  ],
+
+  rejectionHandlers: [
+    new winston.transports.File({
+      filename: "logs/rejections.log",
+    }),
+  ],
+
+  exceptionHandlers: [
+    new winston.transports.File({
+      filename: "logs/exceptions.log",
+    }),
+  ],
 });
 
-// Métodos helpers (opcionales, para uso rápido)
-export const log = (...msg) => {
-  logger.info(msg.join(' '));
-};
-
-export const error = (...msg) => {
-  logger.error(msg.join(' '));
-};
-
-export const warn = (...msg) => {
-  logger.warn(msg.join(' '));
-};
-
-export const debug = (...msg) => {
-  logger.debug(msg.join(' '));
-};
-
-// Exportar el logger principal como default
 export default logger;

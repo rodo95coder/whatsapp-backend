@@ -1,52 +1,26 @@
 // src/middlewares/validateCompanyId.js
+import { normalizeCompanyId, isValidCompanyId } from "../utils/company-id.js";
 
-export const validateCompanyId = (req, res, next) => {
-  // SIEMPRE priorizar params si existen
-  let companyId;
-  let source;
-  
-  if (req.params.companyId) {
-    companyId = req.params.companyId;
-    source = 'params';
-  } else {
-    companyId = req.body.companyId;
-    source = 'body';
+export function validateCompanyId(req, res, next) {
+  const companyId = req.params.companyId ?? req.body.companyId;
+  const cleanCompanyId = normalizeCompanyId(companyId);
+
+  if (!cleanCompanyId) {
+    return res.status(400).json({
+      success: false,
+      message: "companyId no puede estar vacío",
+    });
   }
-  
-  // Log para debug
-  console.log(`[${req.method}] ${req.path} - companyId desde ${source}:`, companyId);
-  
-  // Si vino por body pero también hay params, warning (útil para detectar errores)
-  if (req.params.companyId && req.body.companyId) {
-    console.warn(`ADVERTENCIA: companyId en body (${req.body.companyId}) ignorado, usando params: ${req.params.companyId}`);
+
+  if (!isValidCompanyId(cleanCompanyId)) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "companyId debe tener entre 3 y 50 caracteres y solo puede contener letras, números, guiones y underscores",
+    });
   }
-  
-  const errors = [];
-  
-  if (!companyId) {
-    errors.push("companyId es requerido");
-  } else if (typeof companyId !== 'string') {
-    errors.push("companyId debe ser un texto");
-  } else {
-    const trimmed = companyId.trim();
-    
-    if (trimmed === '') {
-      errors.push("companyId no puede estar vacío");
-    } else if (trimmed.length < 3) {
-      errors.push("companyId debe tener al menos 3 caracteres");
-    } else if (trimmed.length > 50) {
-      errors.push("companyId no puede exceder 50 caracteres");
-    } else if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
-      errors.push("companyId solo puede contener letras, números, guiones y underscores");
-    } else {
-      req.cleanCompanyId = trimmed;
-      return next();
-    }
-  }
-  
-  return res.status(400).json({
-    success: false,
-    errors,
-    source // Útil para debug
-  });
-};
+
+  req.cleanCompanyId = cleanCompanyId;
+
+  return next();
+}

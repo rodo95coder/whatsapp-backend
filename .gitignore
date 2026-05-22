@@ -1,5 +1,7 @@
 node_modules/
-sessions/
+userSessions/
 temp/
 logs/
 .env
+estructura.txt
+comandos.txt

@@ -6,7 +6,7 @@ import {
   getStatus,
   logout,
   sendMessage
-} from "./session-manager.js";
+} from "./session.service.js";
 
 class WhatsappService {
 
