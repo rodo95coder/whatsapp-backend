@@ -18,9 +18,13 @@ async function killProcess(pid) {
   if (!pid) {
     return;
   }
+  const command =
+    process.platform === "win32"
+      ? `taskkill /PID ${pid} /T /F`
+      : `kill -9 ${pid}`;
 
   try {
-    await execAsync(`taskkill /PID ${pid} /T /F`);
+    await execAsync(command);
   } catch {}
 }
 
@@ -71,9 +75,7 @@ export async function destroyClient(companyId) {
     runtime.browserPid = null;
     runtime.qr = null;
     runtime.qrAttempts = 0;
-
   } finally {
-
     runtime.destroying = false;
     runtime.creating = false;
     runtime.connectPromise = null;
