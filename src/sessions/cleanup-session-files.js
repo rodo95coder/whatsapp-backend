@@ -1,55 +1,42 @@
-//src/sessions/cleanup-session-files.js
-
 import fs from "fs-extra";
+import path from "path";
+
 import { companyFolder } from "./session-files.js";
 import logger from "../utils/logger.js";
-import store from "./session-store.js";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function cleanupSessionFiles(companyId) {
+export async function cleanupSessionFiles(companyId, {
+  deleteAuth = true,
+  deleteSessionMetadata = true,
+} = {}) {
   const folder = companyFolder(companyId);
-  logger.warn(`[${companyId}] Cleaning session files`);
+  logger.warn(`[${companyId}] cleanup.files auth=${deleteAuth} metadata=${deleteSessionMetadata}`);
 
-  const exists = await fs.pathExists(folder);
-  if (!exists) {
-    return true;
-  }
-
-  // Esperar liberación real del browser
-  await delay(5000);
-
-  for (let i = 1; i <= 5; i++) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
-      const runtime = store.getRuntime(companyId);
+      if (!(await fs.pathExists(folder))) return true;
 
-      if (runtime?.creating) {
-        logger.warn(`[${companyId}] Cleanup cancelado: sesión recreándose`);
-
-        return false;
+      if (deleteAuth && deleteSessionMetadata) {
+        await fs.remove(folder);
+      } else {
+        if (deleteAuth) await fs.remove(path.join(folder, "chrome"));
+        if (deleteSessionMetadata) {
+          await fs.remove(path.join(folder, "webhook.json"));
+          await fs.remove(path.join(folder, "session-ready.json"));
+        }
       }
-      const exists = await fs.pathExists(folder);
 
-      if (!exists) {
-        return true;
-      }
-
-      await fs.remove(folder);
-
-      logger.info(`[${companyId}] Session files removed`);
-      logger.info(`[${companyId}] Cleanup completed`);
-
+      logger.info(`[${companyId}] cleanup.files.complete`);
       return true;
-    } catch (err) {
-      logger.warn(`[${companyId}] Cleanup retry ${i}: ${err.message}`);
-
+    } catch (error) {
+      logger.warn(`[${companyId}] cleanup.files.retry=${attempt} error=${error.message}`);
       await delay(3000);
     }
   }
 
-  logger.error(`[${companyId}] Failed removing session files`);
-
+  logger.error(`[${companyId}] cleanup.files.failed`);
   return false;
 }

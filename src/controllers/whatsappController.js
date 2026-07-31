@@ -73,7 +73,7 @@ export const getStatus = async (req, res) => {
 
     return res.json({
       success: true,
-      status,
+      ...status,
     });
   } catch (err) {
     logger.error(`[${req.cleanCompanyId}] getStatus: ${err.message}`);
@@ -176,5 +176,27 @@ export const logout = async (req, res) => {
       success: false,
       message: err.message,
     });
+  }
+};
+
+export const forceReset = async (req, res) => {
+  try {
+    const companyId = req.cleanCompanyId;
+    const { deleteAuth = false, deleteSessionMetadata = false, restart = false } = req.body;
+
+    if (![deleteAuth, deleteSessionMetadata, restart].every((value) => typeof value === "boolean")) {
+      return res.status(400).json({ success: false, message: "Las opciones deben ser booleanas" });
+    }
+
+    const result = await sessionManager.forceReset(companyId, {
+      deleteAuth,
+      deleteSessionMetadata,
+      restart,
+    });
+
+    return res.json({ success: true, companyId, ...result });
+  } catch (err) {
+    logger.error(`[${req.cleanCompanyId}] forceReset: ${err.message}`);
+    return res.status(500).json({ success: false, message: "No se pudo reiniciar la sesiÃ³n" });
   }
 };

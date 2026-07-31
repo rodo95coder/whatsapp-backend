@@ -1,135 +1,149 @@
-// src/sessions/client-factory.js
-
 import path from "path";
-import wppconnect from "@wppconnect-team/wppconnect";
+
 import logger from "../utils/logger.js";
 import config from "../config/env.js";
-import store from "./session-store.js";
+import { withTimeout } from "../utils/timeout.js";
+import store, { isCurrentRuntime } from "./session-store.js";
 import { setSessionState } from "./session-state.js";
 import { handleQr } from "./handlers/qr-handler.js";
 import { registerSessionEvents } from "./session-events.js";
-import { destroyClient } from "./session-lifecycle.js";
+import { closeDetachedClient } from "./session-lifecycle.js";
+import { shutdownSession } from "./session-shutdown-manager.js";
 import { scheduleReconnect } from "./reconnect-manager.js";
 import { markSessionReady } from "./session-ready.js";
+import { createWppClient } from "./wppconnect-adapter.js";
 
-const { sessionsPath, puppeteerPath } = config;
+function isCurrent(companyId, runtime, generationId) {
+  return isCurrentRuntime(companyId, runtime) && runtime.isCurrentGeneration(generationId);
+}
+
+function errorCode(error) {
+  const message = error?.message || String(error);
+
+  if (message.includes("Initialization timeout")) return "INITIALIZATION_TIMEOUT";
+  if (message.includes("Runtime.evaluate timed out")) return "PUPPETEER_RUNTIME_EVALUATE_TIMEOUT";
+  if (message.includes("Runtime.callFunctionOn timed out")) return "PUPPETEER_PROTOCOL_TIMEOUT";
+  if (message.includes("Auto Close Called")) return "QR_TIMEOUT";
+  if (message.includes("Failed to authenticate")) return "AUTHENTICATION_FAILED";
+  return "WPPCONNECT_CREATE_FAILED";
+}
+
+function normalizeEngineState(value) {
+  return String(value || "").trim().replace(/([a-z])([A-Z])/g, "$1_$2").replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase();
+}
 
 export async function createClient(companyId) {
   const runtime = store.createRuntime(companyId);
 
   if (runtime.client) {
-    logger.warn(`[${companyId}] Cliente ya existe`);
     return true;
   }
 
-  if (runtime.connectPromise) {
-    return runtime.connectPromise;
+  if (runtime.connectPromise || runtime.creating || runtime.shuttingDown) {
+    return runtime.connectPromise ? runtime.connectPromise.catch(() => false) : false;
   }
 
-  runtime.connectPromise = (async () => {
-    try {
-      runtime.creating = true;
-      setSessionState(companyId, "CONNECTING");
+  const generationId = runtime.beginGeneration();
+  runtime.creating = true;
+  setSessionState(companyId, "CONNECTING", { runtime, generationId });
+  logger.info(`[${companyId}] init.start generation=${generationId} operation=${runtime.operationId}`);
 
-      const userDataDir = path.join(sessionsPath, companyId, "chrome");
+  const createOptions = {
+    session: String(companyId),
+    logQR: false,
+    disableWelcome: true,
+    updatesLog: false,
+    headless: true,
+    autoClose: config.qrTimeoutMs,
+    puppeteerOptions: {
+      executablePath: config.puppeteerPath,
+      userDataDir: path.join(config.sessionsPath, companyId, "chrome"),
+      protocolTimeout: config.puppeteerProtocolTimeoutMs,
+    },
+    catchQR: async (base64Qr, asciiQR, attempt) => {
+      if (!isCurrent(companyId, runtime, generationId)) return;
+      runtime.lastProgressAt = Date.now();
+      await handleQr({ companyId, base64Qr, attempt, runtime, generationId });
+    },
+    statusFind: async (status) => {
+      if (!isCurrent(companyId, runtime, generationId)) return;
+      runtime.lastProgressAt = Date.now();
+      logger.info(`[${companyId}] init.status generation=${generationId} status=${status}`);
 
-      const client = await wppconnect.create({
-        session: String(companyId),
-        logQR: false,
-        disableWelcome: true,
-        updatesLog: false,
-        headless: true,
-        autoClose: config.qrTimeoutMs,
-
-        puppeteerOptions: {
-          executablePath: puppeteerPath,
-          userDataDir,
-        },
-
-        catchQR: async (base64Qr, asciiQR, attempt) => {
-          await handleQr({
-            companyId,
-            base64Qr,
-            attempt,
-          });
-        },
-
-        statusFind: async (status) => {
-          logger.info(`[${companyId}] status: ${status}`);
-
-          if (status === "autocloseCalled") {
-            setSessionState(companyId, "QRCODE_EXPIRED");
-            return;
-          }
-        },
-      });
-
-      const currentRuntime = store.getRuntime(companyId);
-
-      if (!currentRuntime || currentRuntime.manualLogout) {
-        try {
-          await client.close();
-        } catch {}
-
-        return false;
+      const normalizedStatus = normalizeEngineState(status);
+      if (normalizedStatus === "AUTOCLOSE_CALLED") {
+        await shutdownSession(companyId, {
+          reason: "QR_TIMEOUT",
+          runtime,
+        });
+        return;
       }
 
-      runtime.client = client;
-      const page = await client.page;
-      const browser = page.browser();
-      runtime.browser = browser;
-      const process = browser.process();
-      runtime.browserPid = process?.pid || null;
+      // WPPConnect emits "Session Unpaired" while a brand-new session is
+      // waiting for its first QR. It is not an error at this stage; the QR
+      // callback and the client state events decide the real outcome.
+    },
+  };
+  // Promise.resolve also converts a synchronous WPPConnect throw into the
+  // lifecycle error path below.
+  const createPromise = Promise.resolve().then(() => createWppClient(createOptions));
 
-      registerSessionEvents({
-        client,
-        companyId,
-      });
-      setSessionState(companyId, "CONNECTED");
-      await markSessionReady(companyId);
-      logger.info(`[${companyId}] Cliente creado`);
-      return true;
-    } catch (err) {
-      const message = err?.message || String(err);
+  runtime.connectPromise = createPromise;
 
-      await destroyClient(companyId);
-      // AUTOCLOSE QR expired or auth failure
-      if (
-        message.includes("Auto Close Called") ||
-        message.includes("Failed to authenticate")
-      ) {
-        logger.warn(`[${companyId}] QR expirado`);
+  try {
+    const client = await withTimeout(
+      createPromise,
+      config.initSessionTimeoutMs,
+      "Initialization timeout",
+    );
 
-        setSessionState(companyId, "QRCODE_EXPIRED");
-        
-        if (runtime.manualLogout || runtime.pendingFolderCleanup) {
-          const { cleanupSessionFiles } =
-            await import("./cleanup-session-files.js");
-
-          await cleanupSessionFiles(companyId);
-
-          store.removeRuntime(companyId);
-
-          logger.warn(`[${companyId}] Runtime eliminado`);
-        }
-
-        return false;
-      }
-
-      logger.error(`[${companyId}] createClient error: ${message}`);
-      // REAL RECONNECT ONLY IF NOT MANUAL LOGOUT
-      const currentRuntime = store.getRuntime(companyId);
-
-      if (currentRuntime && !currentRuntime.manualLogout) {
-        scheduleReconnect(companyId);
-      }
-
+    if (!isCurrent(companyId, runtime, generationId)) {
+      await closeDetachedClient(client);
       return false;
-    } finally {
+    }
+
+    runtime.client = client;
+    const page = await client.page;
+    const browser = page.browser();
+    runtime.browser = browser;
+    runtime.browserPid = browser.process()?.pid || null;
+
+    if (!isCurrent(companyId, runtime, generationId)) {
+      await closeDetachedClient(client);
+      return false;
+    }
+
+    registerSessionEvents({ client, companyId, runtime, generationId });
+    setSessionState(companyId, "CONNECTED", { runtime, generationId });
+    await markSessionReady(companyId);
+    logger.info(`[${companyId}] init.connected generation=${generationId}`);
+    return true;
+  } catch (error) {
+    const code = errorCode(error);
+    logger.error(`[${companyId}] init.error generation=${generationId} code=${code} error=${error.message}`);
+
+    if (code === "INITIALIZATION_TIMEOUT") {
+      createPromise.then((lateClient) => closeDetachedClient(lateClient), () => {});
+    }
+
+    if (!isCurrentRuntime(companyId, runtime) || runtime.generationId !== generationId) {
+      return false;
+    }
+
+    await shutdownSession(companyId, {
+      reason: code,
+      runtime,
+    });
+
+    if (!["UNPAIRED", "QR_TIMEOUT", "AUTHENTICATION_FAILED"].includes(code) && !runtime.manualLogout) {
+      scheduleReconnect(companyId);
+    }
+    return false;
+  } finally {
+    if (isCurrentRuntime(companyId, runtime) && runtime.generationId === generationId) {
       runtime.creating = false;
       runtime.connectPromise = null;
+      runtime.touch();
     }
-  })();
-
-  return runtime.connectPromise;
+  }
 }

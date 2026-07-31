@@ -6,45 +6,16 @@ import axios from "axios";
 import crypto from "crypto";
 
 import config from "../config/env.js";
+import { assertSafeHttpUrl, safeLookup } from "../utils/url-security.js";
 
 const { tempPath } = config;
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-const PRIVATE_IP_PATTERNS = [
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[0-1])\./,
-  /^localhost$/,
-];
-
 fs.ensureDirSync(tempPath);
 
 function sanitizeFileName(filename) {
   return path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-function validateUrl(url) {
-  let parsed;
-
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("Invalid URL");
-  }
-
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error("Invalid protocol");
-  }
-
-  const hostname = parsed.hostname;
-
-  for (const pattern of PRIVATE_IP_PATTERNS) {
-    if (pattern.test(hostname)) {
-      throw new Error("Private URLs not allowed");
-    }
-  }
 }
 
 function generateTempName(filename) {
@@ -70,7 +41,7 @@ export async function saveBase64ToFile(base64, filename) {
 }
 
 export async function downloadToFile(url, filename) {
-  validateUrl(url);
+  await assertSafeHttpUrl(url);
 
   const full = path.join(tempPath, generateTempName(filename));
 
@@ -83,6 +54,7 @@ export async function downloadToFile(url, filename) {
 
     maxContentLength: MAX_FILE_SIZE,
     maxBodyLength: MAX_FILE_SIZE,
+    lookup: safeLookup,
 
     validateStatus(status) {
       return status >= 200 && status < 300;
@@ -141,7 +113,9 @@ setInterval(
           if (age > 10 * 60 * 1000) {
             await fs.remove(full);
           }
-        } catch {}
+        } catch (cleanupError) {
+          console.warn("Error revisando temporal:", cleanupError.message);
+        }
       }
     } catch (err) {
       console.warn("Error limpiando temporales:", err.message);

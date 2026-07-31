@@ -7,7 +7,6 @@ import { getSessionState } from "../sessions/session-state.js";
 import { sendMessage } from "./message/message-sender.js";
 import logger from "../utils/logger.js";
 import { shutdownSession } from "../sessions/session-shutdown-manager.js";
-import { destroyClient } from "../sessions/session-lifecycle.js";
 
 export function getClient(companyId) {
   return store.getRuntime(companyId)?.client || null;
@@ -52,25 +51,36 @@ export function getStatus(companyId) {
   return getSessionState(companyId);
 }
 
+export async function forceReset(companyId, {
+  deleteAuth = false,
+  deleteSessionMetadata = false,
+  restart = false,
+} = {}) {
+  const result = await shutdownSession(companyId, {
+    reason: "FORCE_RESET",
+    deleteAuth,
+    deleteSessionMetadata,
+    restart,
+  });
+
+  if (restart) {
+    await initSession(companyId);
+  }
+
+  return {
+    ...result,
+    deleteAuth,
+    deleteSessionMetadata,
+    restart,
+  };
+}
+
 export async function logout(companyId) {
   return enqueueSessionOperation(companyId, async () => {
-    const runtime = store.getRuntime(companyId);
-
-    if (runtime) {
-      runtime.manualLogout = true;
-
-      if (runtime.creating && !runtime.client) {
-        runtime.pendingFolderCleanup = true;
-
-        return {
-          success: true,
-          msg: "logout_pending_until_qr_autoclose",
-        };
-      }
-    }
     await shutdownSession(companyId, {
       reason: "LOGOUT",
-      deleteFolder: true,
+      deleteAuth: true,
+      deleteSessionMetadata: true,
     });
 
     return {
@@ -88,6 +98,7 @@ export default {
   getStatus,
   getClient,
   logout,
+  forceReset,
   sendMessage,
   _internal: store,
 };

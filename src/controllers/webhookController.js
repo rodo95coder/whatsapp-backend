@@ -5,6 +5,7 @@ import path from "path";
 
 import config from "../config/env.js";
 import logger from "../utils/logger.js";
+import { assertSafeHttpUrl } from "../utils/url-security.js";
 
 const { sessionsPath } = config;
 
@@ -12,31 +13,19 @@ function webhookFile(companyId) {
   return path.join(sessionsPath, String(companyId), "webhook.json");
 }
 
-function validateWebhookUrl(url) {
-  try {
-    const parsed = new URL(url);
-
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function setWebhook(req, res) {
   try {
     const companyId = req.cleanCompanyId;
     const { url } = req.body;
 
-    if (!url || !validateWebhookUrl(url)) {
+    if (!url) {
       return res.status(400).json({
         success: false,
         message: "URL de webhook inválida",
       });
     }
+
+    await assertSafeHttpUrl(url);
 
     const file = webhookFile(companyId);
 

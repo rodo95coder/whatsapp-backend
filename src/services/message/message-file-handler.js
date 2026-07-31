@@ -1,7 +1,6 @@
 // src/services/message/message-file-handler.js
 
 import fs from "fs/promises";
-import path from "path";
 import fileService from "../file.js";
 
 export async function prepareMessageFile({

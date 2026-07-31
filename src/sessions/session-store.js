@@ -23,6 +23,10 @@ export function removeRuntime(companyId) {
   runtimes.delete(normalizeCompanyId(companyId));
 }
 
+export function isCurrentRuntime(companyId, runtime) {
+  return getRuntime(companyId) === runtime;
+}
+
 export function hasRuntime(companyId) {
   return runtimes.has(normalizeCompanyId(companyId));
 }
@@ -41,6 +45,7 @@ export default Object.freeze({
   getRuntime,
   createRuntime,
   removeRuntime,
+  isCurrentRuntime,
   hasRuntime,
   getAllRuntimes,
   forEachRuntime,

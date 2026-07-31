@@ -14,6 +14,10 @@ function sessionReadyFile(companyId) {
   return path.join(config.sessionsPath, companyId, "session-ready.json");
 }
 
+function normalizeEngineState(value) {
+  return String(value || "").trim().replace(/([a-z])([A-Z])/g, "$1_$2").replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase();
+}
+
 async function markSessionReady(companyId) {
   await fs.ensureDir(path.join(config.sessionsPath, companyId));
 
@@ -27,50 +31,51 @@ async function markSessionReady(companyId) {
   );
 }
 
-export function registerSessionEvents({ client, companyId }) {
+export function registerSessionEvents({ client, companyId, runtime: expectedRuntime, generationId }) {
   const runtime = store.getRuntime(companyId);
 
-  if (!runtime) {
+  if (!runtime || runtime !== expectedRuntime || !runtime.isCurrentGeneration(generationId)) {
     return;
   }
 
   client.onStateChange(async (state) => {
     const currentRuntime = store.getRuntime(companyId);
-    if (!currentRuntime) {
+    if (!currentRuntime || currentRuntime !== expectedRuntime || !currentRuntime.isCurrentGeneration(generationId)) {
       return;
     }
 
-    logger.info(`[${companyId}] onStateChange => ${state}`);
+    const normalizedState = normalizeEngineState(state);
+    logger.info(`[${companyId}] onStateChange => ${normalizedState}`);
 
     currentRuntime.engineState = state;
 
-    switch (state) {
+    switch (normalizedState) {
       case "CONNECTED":
       case "MAIN":
       case "NORMAL":
-      case "inChat":
-      case "isLogged":
+      case "IN_CHAT":
+      case "IS_LOGGED":
         currentRuntime.reconnectAttempts = 0;
         currentRuntime.qr = null;
         currentRuntime.qrAttempts = 0;
 
         await markSessionReady(companyId);
-        setSessionState(companyId, "CONNECTED");
+        setSessionState(companyId, "CONNECTED", { runtime: currentRuntime, generationId });
         break;
 
       case "QR_READY":
-      case "notLogged":
-        setSessionState(companyId, "WAITING_QR");
+      case "NOT_LOGGED":
+        setSessionState(companyId, "QR_REQUIRED", { runtime: currentRuntime, generationId });
         break;
 
       case "DISCONNECTED":
       case "UNPAIRED":
-      case "browserClose":
+      case "BROWSER_CLOSE":
       case "CLOSED":
-        setSessionState(companyId, "DISCONNECTED");
+        setSessionState(companyId, "DISCONNECTED", { runtime: currentRuntime, generationId, reason: "ENGINE_DISCONNECTED" });
 
         if (!currentRuntime.manualLogout) {
-          scheduleReconnect(companyId);
+          scheduleReconnect(companyId, { runtime: currentRuntime, generationId });
         }
 
         break;
@@ -79,7 +84,7 @@ export function registerSessionEvents({ client, companyId }) {
 
   client.onMessage(() => {
     const currentRuntime = store.getRuntime(companyId);
-    if (!currentRuntime) {
+    if (!currentRuntime || currentRuntime !== expectedRuntime || !currentRuntime.isCurrentGeneration(generationId)) {
       return;
     }
     currentRuntime.touch();

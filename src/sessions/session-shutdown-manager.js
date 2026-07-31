@@ -1,30 +1,51 @@
 import logger from "../utils/logger.js";
-import store, { removeRuntime } from "./session-store.js";
+import store from "./session-store.js";
 import { setSessionState } from "./session-state.js";
 import { destroyClient } from "./session-lifecycle.js";
 import { cleanupSessionFiles } from "./cleanup-session-files.js";
 
 export async function shutdownSession(
   companyId,
-  { reason = "UNKNOWN", deleteFolder = false } = {},
+  { reason = "UNKNOWN", deleteAuth = false, deleteSessionMetadata = false, runtime: expectedRuntime, restart = false } = {},
 ) {
   const runtime = store.getRuntime(companyId);
 
-  if (!runtime) {
-    return;
+  if (!runtime || (expectedRuntime && runtime !== expectedRuntime)) {
+    if (!runtime && (deleteAuth || deleteSessionMetadata)) {
+      await cleanupSessionFiles(companyId, { deleteAuth, deleteSessionMetadata });
+    }
+    return { success: true, skipped: true };
   }
-  logger.warn(`[${companyId}] Shutdown (${reason})`);
+
+  if (runtime.shutdownPromise) {
+    return runtime.shutdownPromise;
+  }
+
+  runtime.shutdownPromise = (async () => {
+    const generationId = runtime.generationId;
+    logger.warn(`[${companyId}] shutdown.start generation=${generationId} reason=${reason}`);
+    runtime.shuttingDown = true;
+    runtime.invalidateGeneration();
+    setSessionState(companyId, "SHUTTING_DOWN", { runtime, reason });
+    runtime.manualLogout = reason === "LOGOUT";
+    await destroyClient(companyId, { runtime });
+
+    if (deleteAuth || deleteSessionMetadata) {
+      await cleanupSessionFiles(companyId, { deleteAuth, deleteSessionMetadata });
+    }
+
+    runtime.client = null;
+    runtime.browser = null;
+    runtime.browserPid = null;
+    runtime.shuttingDown = false;
+    setSessionState(companyId, restart ? "IDLE" : "DISCONNECTED", { runtime, reason });
+    logger.warn(`[${companyId}] shutdown.complete generation=${generationId} reason=${reason}`);
+    return { success: true };
+  })();
 
   try {
-    setSessionState(companyId, "STOPPING");
-    runtime.manualLogout = reason === "LOGOUT";
-    await destroyClient(companyId);
-
-    if (deleteFolder) {
-      await cleanupSessionFiles(companyId);
-    }
+    return await runtime.shutdownPromise;
   } finally {
-    removeRuntime(companyId);
-    logger.warn(`[${companyId}] Runtime eliminado`);
+    runtime.shutdownPromise = null;
   }
 }

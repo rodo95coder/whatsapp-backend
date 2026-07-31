@@ -81,6 +81,15 @@ const config = {
   initSessionTimeoutMs:
     toNumber(process.env.INIT_SESSION_TIMEOUT_MS, 180000),
 
+  browserCloseTimeoutMs:
+    toNumber(process.env.BROWSER_CLOSE_TIMEOUT_MS, 10000),
+
+  puppeteerProtocolTimeoutMs:
+    toNumber(process.env.PUPPETEER_PROTOCOL_TIMEOUT_MS, 60000),
+
+  sessionWatchdogIntervalMs:
+    toNumber(process.env.SESSION_WATCHDOG_INTERVAL_MS, 30000),
+
   logoutTimeoutMs:
     toNumber(process.env.LOGOUT_TIMEOUT_MS, 15000),
 

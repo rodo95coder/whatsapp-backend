@@ -1,16 +1,19 @@
 // src/sessions/session-lifecycle.js
 
-import { exec } from "child_process";
+import { execFile } from "child_process";
+import path from "path";
 import logger from "../utils/logger.js";
 import store from "./session-store.js";
+import config from "../config/env.js";
+import { withTimeout } from "../utils/timeout.js";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function execAsync(command) {
+function execFileAsync(file, args) {
   return new Promise((resolve) => {
-    exec(command, () => resolve());
+    execFile(file, args, () => resolve());
   });
 }
 
@@ -19,30 +22,56 @@ async function killProcess(pid) {
     return;
   }
   const command =
-    process.platform === "win32"
-      ? `taskkill /PID ${pid} /T /F`
-      : `kill -9 ${pid}`;
+    process.platform === "win32" ? "taskkill" : "kill";
+  const args = process.platform === "win32"
+    ? ["/PID", String(pid), "/T", "/F"]
+    : ["-KILL", String(pid)];
 
   try {
-    await execAsync(command);
-  } catch {}
+    await execFileAsync(command, args);
+  } catch (error) {
+    logger.debug(`Unable to kill browser pid=${pid}: ${error.message}`);
+  }
 }
 
-export async function destroyClient(companyId) {
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function terminateProfileProcesses(companyId) {
+  if (process.platform === "win32") {
+    return;
+  }
+
+  const profile = path.join(config.sessionsPath, companyId, "chrome");
+  const pattern = `--user-data-dir=${escapeRegex(profile)}`;
+  await execFileAsync("pkill", ["-TERM", "-f", pattern]);
+  await delay(500);
+  await execFileAsync("pkill", ["-KILL", "-f", pattern]);
+}
+
+export async function closeDetachedClient(client) {
+  try {
+    await withTimeout(client?.close?.(), config.browserCloseTimeoutMs, "Detached client close timeout");
+  } catch (error) {
+    logger.debug(`Detached client close failed: ${error.message}`);
+  }
+}
+
+export async function destroyClient(companyId, { runtime: expectedRuntime } = {}) {
   const runtime = store.getRuntime(companyId);
 
-  if (!runtime) {
+  if (!runtime || (expectedRuntime && runtime !== expectedRuntime)) {
     return;
   }
 
   if (runtime.destroying) {
-    return;
+    return runtime.destroyPromise;
   }
 
   runtime.destroying = true;
-  logger.warn(`[${companyId}] Destroying client`);
-
-  try {
+  runtime.destroyPromise = (async () => {
+    logger.warn(`[${companyId}] destroy.start generation=${runtime.generationId}`);
     if (runtime.reconnectTimer) {
       clearTimeout(runtime.reconnectTimer);
       runtime.reconnectTimer = null;
@@ -54,28 +83,39 @@ export async function destroyClient(companyId) {
 
     try {
       client?.removeAllListeners?.();
-    } catch {}
+    } catch (error) {
+      logger.debug(`[${companyId}] remove listeners failed: ${error.message}`);
+    }
 
     try {
-      await client?.close?.();
-    } catch {}
+      await withTimeout(client?.close?.(), config.browserCloseTimeoutMs, "Client close timeout");
+    } catch (error) {
+      logger.warn(`[${companyId}] client.close failed: ${error.message}`);
+    }
 
     try {
-      await browser?.close?.();
-    } catch {}
-
-    await delay(2000);
+      await withTimeout(browser?.close?.(), config.browserCloseTimeoutMs, "Browser close timeout");
+    } catch (error) {
+      logger.warn(`[${companyId}] browser.close failed: ${error.message}`);
+    }
 
     if (browserPid) {
       await killProcess(browserPid);
     }
+
+    await terminateProfileProcesses(companyId);
 
     runtime.client = null;
     runtime.browser = null;
     runtime.browserPid = null;
     runtime.qr = null;
     runtime.qrAttempts = 0;
+  })();
+
+  try {
+    await runtime.destroyPromise;
   } finally {
+    runtime.destroyPromise = null;
     runtime.destroying = false;
     runtime.creating = false;
     runtime.connectPromise = null;

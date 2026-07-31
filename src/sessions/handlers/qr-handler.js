@@ -7,12 +7,14 @@ import { setSessionState } from "../session-state.js";
 
 const { maxQrAttempts } = config;
 
-export async function handleQr({ companyId, base64Qr, attempt }) {
+export async function handleQr({ companyId, base64Qr, attempt, runtime: expectedRuntime, generationId }) {
   const runtime = store.getRuntime(companyId);
 
-  if (!runtime) {
+  if (!runtime || (expectedRuntime && runtime !== expectedRuntime)) {
     return;
   }
+
+  if (generationId !== undefined && !runtime.isCurrentGeneration(generationId)) return;
 
   if (runtime.destroying) {
     return;
@@ -27,7 +29,7 @@ export async function handleQr({ companyId, base64Qr, attempt }) {
   runtime.lastQrAt = Date.now();
   runtime.touch();
 
-  setSessionState(companyId, "QRCODE");
+  setSessionState(companyId, "QR_REQUIRED", { runtime, generationId });
 
   logger.info(`[${companyId}] QR attempt ${attempt}/${maxQrAttempts}`);
 

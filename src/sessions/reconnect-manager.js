@@ -10,12 +10,14 @@ const RECONNECT_MAX_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 3000;
 const RECONNECT_MAX_DELAY_MS = 60000;
 
-export function scheduleReconnect(companyId) {
+export function scheduleReconnect(companyId, { runtime: expectedRuntime, generationId } = {}) {
   const runtime = store.getRuntime(companyId);
 
-  if (!runtime) {
+  if (!runtime || (expectedRuntime && runtime !== expectedRuntime)) {
     return;
   }
+
+  if (generationId !== undefined && !runtime.isCurrentGeneration(generationId)) return;
 
   if (runtime.state === "CONNECTED") {
     return;
@@ -46,12 +48,12 @@ export function scheduleReconnect(companyId) {
 
   logger.warn(`[${companyId}] Reconnect en ${delay}ms`);
 
-  setSessionState(companyId, "RECONNECTING");
+  setSessionState(companyId, "RECONNECTING", { runtime });
 
   runtime.reconnectTimer = setTimeout(async () => {
     const currentRuntime = store.getRuntime(companyId);
 
-    if (!currentRuntime) {
+    if (!currentRuntime || currentRuntime !== runtime || currentRuntime.shuttingDown || currentRuntime.manualLogout) {
       return;
     }
 
@@ -72,4 +74,5 @@ export function scheduleReconnect(companyId) {
       scheduleReconnect(companyId);
     }
   }, delay);
+  runtime.reconnectTimer.unref?.();
 }

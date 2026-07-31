@@ -3,6 +3,7 @@
 import axios from "axios";
 import logger from "../utils/logger.js";
 import config from "../config/env.js";
+import { assertSafeHttpUrl, safeLookup } from "../utils/url-security.js";
 
 const { webhookTimeoutMs } = config;
 
@@ -13,24 +14,22 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isValidHttpUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return ["http:", "https:"].includes(parsed.protocol);
-  } catch {
-    return false;
-  }
-}
-
 export async function emitWebhook(webhookUrl, payload) {
-  if (!webhookUrl || !isValidHttpUrl(webhookUrl)) {
+  if (!webhookUrl) {
     return;
+  }
+  try {
+    await assertSafeHttpUrl(webhookUrl);
+  } catch (error) {
+    logger.warn(`Webhook bloqueado: ${error.message}`);
+    return false;
   }
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       await axios.post(webhookUrl, payload, {
         timeout: webhookTimeoutMs,
+        lookup: safeLookup,
       });
 
       logger.info(`Webhook OK ${payload?.event || "unknown"}`);

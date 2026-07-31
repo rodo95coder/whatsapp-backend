@@ -8,6 +8,7 @@ import logger from "./src/utils/logger.js";
 import { restoreSessionsOnBoot } from "./src/sessions/restore-manager.js";
 import store from "./src/sessions/session-store.js";
 import { shutdownSession } from "./src/sessions/session-shutdown-manager.js";
+import { startSessionWatchdog } from "./src/sessions/session-watchdog.js";
 
 const { port } = config;
 const HOST = "0.0.0.0";
@@ -35,8 +36,8 @@ async function gracefulShutdown(signal) {
       runtimes.map((companyId) =>
         shutdownSession(companyId, {
           reason: signal,
-          deleteFolder: false,
-          remove: false,
+          deleteAuth: false,
+          deleteSessionMetadata: false,
         }),
       ),
     );
@@ -61,4 +62,5 @@ app.listen(port, HOST, () => {
   restoreSessionsOnBoot().catch((err) => {
     logger.error(`Restore error: ${err.message}`);
   });
+  startSessionWatchdog();
 });

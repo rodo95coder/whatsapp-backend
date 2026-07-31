@@ -2,16 +2,24 @@
 
 import store from "./session-store.js";
 
-export function setSessionState(companyId, state) {
-  const runtime = store.getRuntime(companyId);
+export function setSessionState(companyId, state, { runtime, generationId, reason } = {}) {
+  const currentRuntime = store.getRuntime(companyId);
 
-  if (!runtime) {
-    return;
+  if (!currentRuntime || (runtime && currentRuntime !== runtime)) {
+    return false;
   }
 
-  runtime.state = state;
+  if (generationId !== undefined && !currentRuntime.isCurrentGeneration(generationId)) {
+    return false;
+  }
 
-  runtime.touch();
+  currentRuntime.state = state;
+  if (reason !== undefined) {
+    currentRuntime.reason = reason;
+  }
+
+  currentRuntime.touch();
+  return true;
 }
 
 export function getSessionState(companyId) {
@@ -21,5 +29,11 @@ export function getSessionState(companyId) {
     return "NOT_FOUND";
   }
 
-  return runtime.state || "IDLE";
+  return {
+    status: runtime.state || "IDLE",
+    reason: runtime.reason || null,
+    updatedAt: new Date(runtime.updatedAt).toISOString(),
+    generationId: runtime.generationId,
+    recoverable: !runtime.manualLogout,
+  };
 }
