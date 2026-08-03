@@ -5,6 +5,10 @@ import path from "path";
 import process from "process";
 
 const cwd = process.cwd();
+const runsAsRoot =
+  process.platform !== "win32" &&
+  typeof process.getuid === "function" &&
+  process.getuid() === 0;
 
 function toNumber(value, fallback) {
   const parsed = Number(value);
@@ -46,6 +50,12 @@ const config = {
 
   puppeteerPath:
     process.env.PUPPETEER_EXECUTABLE_PATH || null,
+
+  // Chromium refuses to start as root unless its sandbox is disabled. Prefer
+  // running the service as an unprivileged user; this fallback keeps an
+  // existing root-managed deployment operational until it is migrated.
+  puppeteerNoSandbox:
+    toBoolean(process.env.PUPPETEER_NO_SANDBOX, runsAsRoot),
 
   sessionsPath,
 

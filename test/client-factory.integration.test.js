@@ -4,13 +4,14 @@ import assert from "node:assert/strict";
 process.env.GLOBAL_TOKEN ||= "test-token";
 process.env.INIT_SESSION_TIMEOUT_MS = "25";
 process.env.BROWSER_CLOSE_TIMEOUT_MS = "10";
+process.env.PUPPETEER_NO_SANDBOX = "true";
 
 const store = await import("../src/sessions/session-store.js");
 const { createClient } = await import("../src/sessions/client-factory.js");
 const { getSessionState } = await import("../src/sessions/session-state.js");
 const adapter = await import("../src/sessions/wppconnect-adapter.js");
 
-const ids = ["itest-timeout", "itest-unpaired", "itest-late", "itest-concurrent", "itest-qr"];
+const ids = ["itest-timeout", "itest-unpaired", "itest-late", "itest-concurrent", "itest-qr", "itest-root"];
 
 afterEach(() => {
   adapter.resetWppClientCreatorForTests();
@@ -30,7 +31,10 @@ function fakeClient() {
 }
 
 test("createClient nunca resuelve: termina en DISCONNECTED y programa recuperaciÃ³n", async () => {
-  adapter.setWppClientCreatorForTests(() => new Promise(() => {}));
+  adapter.setWppClientCreatorForTests((options) => {
+    assert.deepEqual(options.puppeteerOptions.args, ["--no-sandbox", "--disable-setuid-sandbox"]);
+    return new Promise(() => {});
+  });
 
   const result = await createClient("itest-timeout");
   const runtime = store.getRuntime("itest-timeout");

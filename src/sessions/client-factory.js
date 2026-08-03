@@ -79,6 +79,9 @@ export async function createClient(companyId) {
       executablePath: config.puppeteerPath,
       userDataDir: path.join(config.sessionsPath, companyId, "chrome"),
       protocolTimeout: config.puppeteerProtocolTimeoutMs,
+      ...(config.puppeteerNoSandbox && {
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      }),
     },
     catchQR: async (base64Qr, asciiQR, attempt) => {
       if (!isCurrent(companyId, runtime, generationId)) return;
