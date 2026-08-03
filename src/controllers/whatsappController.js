@@ -159,6 +159,7 @@ export const logout = async (req, res) => {
       success: result.success,
       message: result.msg,
       companyId,
+      remoteLogout: result.remoteLogout,
     });
   } catch (err) {
     logger.error(`[${req.cleanCompanyId}] logout: ${err.message}`);

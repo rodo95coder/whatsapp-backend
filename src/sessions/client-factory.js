@@ -11,6 +11,7 @@ import { shutdownSession } from "./session-shutdown-manager.js";
 import { scheduleReconnect } from "./reconnect-manager.js";
 import { markSessionReady } from "./session-ready.js";
 import { createWppClient } from "./wppconnect-adapter.js";
+import wppLogger from "../utils/wpp-logger.js";
 
 function isCurrent(companyId, runtime, generationId) {
   return isCurrentRuntime(companyId, runtime) && runtime.isCurrentGeneration(generationId);
@@ -73,6 +74,7 @@ export async function createClient(companyId) {
     logQR: false,
     disableWelcome: true,
     updatesLog: false,
+    logger: wppLogger,
     headless: true,
     autoClose: config.qrTimeoutMs,
     puppeteerOptions: {

@@ -7,6 +7,7 @@ const store = await import("../src/sessions/session-store.js");
 const { setSessionState, getSessionState } = await import("../src/sessions/session-state.js");
 const { shutdownSession } = await import("../src/sessions/session-shutdown-manager.js");
 const { assertSafeHttpUrl } = await import("../src/utils/url-security.js");
+const { logout } = await import("../src/services/session.service.js");
 
 test("bloquea destinos SSRF locales en IPv4 e IPv6", async () => {
   await assert.rejects(assertSafeHttpUrl("http://127.0.0.1/internal"));
@@ -59,5 +60,33 @@ test("shutdown es idempotente y libera una sesión sin cliente", async () => {
   assert.equal(runtime.browser, null);
   assert.equal(getSessionState(companyId).status, "DISCONNECTED");
 
+  store.removeRuntime(companyId);
+});
+
+test("logout explÃ­cito desvincula WhatsApp antes del cierre local", async () => {
+  const companyId = "test-remote-logout";
+  store.removeRuntime(companyId);
+  const runtime = store.createRuntime(companyId);
+  runtime.beginGeneration();
+  let logoutCalls = 0;
+  runtime.client = {
+    async logout() {
+      logoutCalls += 1;
+      return true;
+    },
+    async close() {},
+    removeAllListeners() {},
+  };
+
+  const result = await logout(companyId);
+
+  assert.equal(logoutCalls, 1);
+  assert.deepEqual(result.remoteLogout, {
+    attempted: true,
+    success: true,
+    error: null,
+  });
+  assert.equal(runtime.manualLogout, true);
+  assert.equal(runtime.client, null);
   store.removeRuntime(companyId);
 });

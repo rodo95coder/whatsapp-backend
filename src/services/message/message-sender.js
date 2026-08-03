@@ -30,22 +30,51 @@ function sanitizeSendResponse(response) {
     return null;
   }
 
+  const ack = response.transportResult === "OK" && Number(response.ack) < 1
+    ? 1
+    : response.ack;
+
   return {
     messageId: response.id?._serialized || response.id || null,
     to: response.to || response.chatId || null,
     from: response.from || null,
-    status: mapAckStatus(response.ack),
+    status: mapAckStatus(ack),
     type: response.type || null,
     timestamp: response.t || response.timestamp || null,
   };
 }
 
-function isWppSoftSendError(error) {
-  const message = error?.message || String(error);
+async function sendTextDirectly(client, chatId, text) {
+  const page = await client.page;
 
-  return (
-    message.includes("msgChunks") ||
-    message.includes("Cannot read properties of undefined")
+  return withTimeout(
+    page.evaluate(
+      async ({ targetChatId, content }) => {
+        const result = await globalThis.WPP.chat.sendTextMessage(targetChatId, content, {
+          waitForAck: true,
+        });
+        const transport = await result.sendMsgResult;
+
+        if (transport?.messageSendResult !== "OK") {
+          throw new Error(`WPP transport failed: ${transport?.messageSendResult || "UNKNOWN"}`);
+        }
+
+        // Return only serializable fields. WPPConnect's client.sendText()
+        // attempts a second legacy WAPI lookup here, which can fail after a
+        // successful send when WhatsApp Web changes its internal stores.
+        return {
+          id: result.id,
+          to: result.to,
+          from: result.from,
+          ack: result.ack,
+          transportResult: transport.messageSendResult,
+          timestamp: Date.now(),
+        };
+      },
+      { targetChatId: chatId, content: text || "" },
+    ),
+    sendMessageTimeoutMs,
+    "sendText timeout",
   );
 }
 
@@ -65,11 +94,7 @@ async function sendSingleMessage({ client, number, text, filePath, fileName }) {
     );
   }
 
-  return withTimeout(
-    client.sendText(chatId, text || ""),
-    sendMessageTimeoutMs,
-    "sendText timeout",
-  );
+  return sendTextDirectly(client, chatId, text);
 }
 
 function validateSendPayload({ numbers, text, filePath }) {
@@ -163,19 +188,6 @@ export async function sendMessage({
         });
         trackMessage(runtime, sanitized);
       } catch (error) {
-        if (isWppSoftSendError(error)) {
-          results.push({
-            number,
-            success: true,
-            status: "sent_unconfirmed",
-            deliveryConfirmed: false,
-            retryRecommended: false,
-            warning: error.message,
-          });
-
-          continue;
-        }
-
         results.push({
           number,
           success: false,

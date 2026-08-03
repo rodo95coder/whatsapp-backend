@@ -7,6 +7,8 @@ import { getSessionState } from "../sessions/session-state.js";
 import { sendMessage } from "./message/message-sender.js";
 import logger from "../utils/logger.js";
 import { shutdownSession } from "../sessions/session-shutdown-manager.js";
+import config from "../config/env.js";
+import { withTimeout } from "../utils/timeout.js";
 
 export function getClient(companyId) {
   return store.getRuntime(companyId)?.client || null;
@@ -77,6 +79,38 @@ export async function forceReset(companyId, {
 
 export async function logout(companyId) {
   return enqueueSessionOperation(companyId, async () => {
+    const runtime = store.getRuntime(companyId);
+    let remoteLogout = {
+      attempted: false,
+      success: false,
+      error: null,
+    };
+
+    // Only an explicit user logout unpairs the linked WhatsApp device. Resets,
+    // timeouts and automatic recovery intentionally remain local operations.
+    if (runtime?.client?.logout) {
+      runtime.manualLogout = true;
+      remoteLogout.attempted = true;
+
+      try {
+        const loggedOut = await withTimeout(
+          Promise.resolve(runtime.client.logout()),
+          config.logoutTimeoutMs,
+          "Remote WhatsApp logout timeout",
+        );
+
+        if (loggedOut !== true) {
+          throw new Error("WhatsApp did not confirm remote logout");
+        }
+
+        remoteLogout.success = true;
+        logger.info(`[${companyId}] remote logout completed`);
+      } catch (error) {
+        remoteLogout.error = error.message;
+        logger.warn(`[${companyId}] remote logout failed: ${error.message}`);
+      }
+    }
+
     await shutdownSession(companyId, {
       reason: "LOGOUT",
       deleteAuth: true,
@@ -86,6 +120,7 @@ export async function logout(companyId) {
     return {
       success: true,
       msg: "logout_success",
+      remoteLogout,
     };
   });
 }

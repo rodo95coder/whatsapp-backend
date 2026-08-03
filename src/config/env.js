@@ -64,6 +64,9 @@ const config = {
   logLevel:
     process.env.LOG_LEVEL || "info",
 
+  wppLogLevel:
+    process.env.WPP_LOG_LEVEL || "warn",
+
   clientMaxBodySize:
     process.env.CLIENT_MAX_BODY_SIZE || "50mb",
 

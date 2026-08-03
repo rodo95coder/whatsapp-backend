@@ -10,7 +10,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@wppconnect-team/wppconnect": "^1.37.2",
+    "@wppconnect-team/wppconnect": "2.2.6",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
