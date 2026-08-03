@@ -29,6 +29,18 @@ test("una generación antigua no puede actualizar el runtime actual", () => {
   store.removeRuntime(companyId);
 });
 
+test("una sesión inexistente conserva el contrato de estado", () => {
+  const status = getSessionState("test-missing-session");
+
+  assert.deepEqual(status, {
+    status: "NOT_FOUND",
+    reason: null,
+    updatedAt: null,
+    generationId: null,
+    recoverable: false,
+  });
+});
+
 test("shutdown es idempotente y libera una sesión sin cliente", async () => {
   const companyId = "test-shutdown";
   store.removeRuntime(companyId);

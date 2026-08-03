@@ -10,7 +10,7 @@ const { createClient } = await import("../src/sessions/client-factory.js");
 const { getSessionState } = await import("../src/sessions/session-state.js");
 const adapter = await import("../src/sessions/wppconnect-adapter.js");
 
-const ids = ["itest-timeout", "itest-unpaired", "itest-late", "itest-concurrent"];
+const ids = ["itest-timeout", "itest-unpaired", "itest-late", "itest-concurrent", "itest-qr"];
 
 afterEach(() => {
   adapter.resetWppClientCreatorForTests();
@@ -64,6 +64,21 @@ test("Session Unpaired inicial no cancela el flujo de una sesión nueva", async 
   assert.equal(status.reason, null);
   assert.equal(store.getRuntime("itest-unpaired").reconnectTimer, null);
   assert.equal(client.closeCalls, 0);
+});
+
+test("un QR disponible no vence el timeout de arranque ni inicia reconnect", async () => {
+  adapter.setWppClientCreatorForTests(async (options) => {
+    await options.catchQR("data:image/png;base64,cXI=", null, 1);
+    return new Promise(() => {});
+  });
+
+  void createClient("itest-qr");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const runtime = store.getRuntime("itest-qr");
+  assert.equal(getSessionState("itest-qr").status, "QR_REQUIRED");
+  assert.equal(runtime.reconnectTimer, null);
+  assert.equal(runtime.creating, true);
 });
 
 test("un cliente que resuelve tarde se cierra y no revive el runtime", async () => {

@@ -9,6 +9,7 @@ import {
   enqueueSessionOperation,
   getQueueSize,
 } from "../../core/session-operation-queue.js";
+import { mapAckStatus, trackMessage } from "./message-tracker.js";
 
 const { maxQueuePerSession, sendMessageTimeoutMs } = config;
 
@@ -22,20 +23,6 @@ function normalizeNumber(number) {
   const digits = value.replace(/\D/g, "");
 
   return `${digits}@c.us`;
-}
-
-function mapAckStatus(ack) {
-  const map = {
-    "-1": "error",
-    0: "pending",
-    1: "server",
-    2: "delivered",
-    3: "read",
-    4: "played",
-    5: "played",
-  };
-
-  return map[String(ack)] || "unknown";
 }
 
 function sanitizeSendResponse(response) {
@@ -160,6 +147,8 @@ export async function sendMessage({
             number,
             success: true,
             status: "sent_unconfirmed",
+            deliveryConfirmed: false,
+            retryRecommended: false,
             warning: "WPPConnect returned empty response",
           });
 
@@ -170,13 +159,17 @@ export async function sendMessage({
           number,
           success: true,
           ...sanitized,
+          deliveryConfirmed: ["delivered", "read", "played"].includes(sanitized.status),
         });
+        trackMessage(runtime, sanitized);
       } catch (error) {
         if (isWppSoftSendError(error)) {
           results.push({
             number,
             success: true,
             status: "sent_unconfirmed",
+            deliveryConfirmed: false,
+            retryRecommended: false,
             warning: error.message,
           });
 

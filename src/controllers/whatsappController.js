@@ -5,6 +5,8 @@ import fs from "fs-extra";
 import sessionManager from "../services/session.service.js";
 import logger from "../utils/logger.js";
 import { saveBase64ToFile, downloadToFile } from "../services/file.js";
+import { createScannableQr } from "../services/qr-image.js";
+import { getTrackedMessage } from "../services/message/message-tracker.js";
 
 export const initSession = async (req, res) => {
   try {
@@ -35,24 +37,13 @@ export const getQR = async (req, res) => {
       });
     }
 
-    const match = qr.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/);
-
-    if (!match) {
-      return res.json({
-        success: true,
-        data: {
-          qrCode: qr,
-          companyId,
-        },
-      });
-    }
+    const image = await createScannableQr(qr);
 
     return res.json({
       success: true,
       data: {
-        qrCode: match[2],
-        format: match[1],
-        mimeType: `image/${match[1]}`,
+        ...image,
+        format: "png",
         companyId,
       },
     });
@@ -199,4 +190,21 @@ export const forceReset = async (req, res) => {
     logger.error(`[${req.cleanCompanyId}] forceReset: ${err.message}`);
     return res.status(500).json({ success: false, message: "No se pudo reiniciar la sesiÃ³n" });
   }
+};
+
+export const getMessageStatus = async (req, res) => {
+  const { companyId, messageId } = req.params;
+  const message = getTrackedMessage(companyId, messageId);
+
+  if (!message) {
+    return res.status(404).json({ success: false, message: "Estado de mensaje no disponible o expirado" });
+  }
+
+  return res.json({
+    success: true,
+    message: {
+      ...message,
+      deliveryConfirmed: ["delivered", "read", "played"].includes(message.status),
+    },
+  });
 };

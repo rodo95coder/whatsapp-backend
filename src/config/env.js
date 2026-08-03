@@ -95,6 +95,27 @@ const config = {
 
   maxQueuePerSession:
     toNumber(process.env.MAX_QUEUE_PER_SESSION, 1000),
+
+  messageTrackerTtlMs:
+    toNumber(process.env.MESSAGE_TRACKER_TTL_MS, 24 * 60 * 60 * 1000),
+
+  maxTrackedMessagesPerSession:
+    toNumber(process.env.MAX_TRACKED_MESSAGES_PER_SESSION, 1000),
+
+  maxTrackedMessagesTotal:
+    toNumber(process.env.MAX_TRACKED_MESSAGES_TOTAL, 10000),
+
+  messageTrackerHeapPercent:
+    toNumber(process.env.MESSAGE_TRACKER_HEAP_PERCENT, 70),
+
+  sessionCapacityWarnFreeMemoryMb:
+    toNumber(process.env.SESSION_CAPACITY_WARN_FREE_MEMORY_MB, 512),
+
+  sessionCapacityWarnProcessRssMb:
+    toNumber(process.env.SESSION_CAPACITY_WARN_PROCESS_RSS_MB, 800),
+
+  sessionCapacityWarnCooldownMs:
+    toNumber(process.env.SESSION_CAPACITY_WARN_COOLDOWN_MS, 5 * 60 * 1000),
 };
 
 if (!config.globalToken) {

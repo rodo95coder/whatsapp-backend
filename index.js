@@ -9,6 +9,7 @@ import { restoreSessionsOnBoot } from "./src/sessions/restore-manager.js";
 import store from "./src/sessions/session-store.js";
 import { shutdownSession } from "./src/sessions/session-shutdown-manager.js";
 import { startSessionWatchdog } from "./src/sessions/session-watchdog.js";
+import { startSessionCapacityMonitor } from "./src/sessions/session-capacity-monitor.js";
 
 const { port } = config;
 const HOST = "0.0.0.0";
@@ -63,4 +64,5 @@ app.listen(port, HOST, () => {
     logger.error(`Restore error: ${err.message}`);
   });
   startSessionWatchdog();
+  startSessionCapacityMonitor();
 });

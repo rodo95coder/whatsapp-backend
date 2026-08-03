@@ -26,7 +26,13 @@ export function getSessionState(companyId) {
   const runtime = store.getRuntime(companyId);
 
   if (!runtime) {
-    return "NOT_FOUND";
+    return {
+      status: "NOT_FOUND",
+      reason: null,
+      updatedAt: null,
+      generationId: null,
+      recoverable: false,
+    };
   }
 
   return {

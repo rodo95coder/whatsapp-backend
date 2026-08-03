@@ -34,7 +34,12 @@ INIT_SESSION_TIMEOUT_MS=180000
 BROWSER_CLOSE_TIMEOUT_MS=10000
 PUPPETEER_PROTOCOL_TIMEOUT_MS=60000
 SESSION_WATCHDOG_INTERVAL_MS=30000
+SESSION_CAPACITY_WARN_FREE_MEMORY_MB=512
+SESSION_CAPACITY_WARN_PROCESS_RSS_MB=800
+SESSION_CAPACITY_WARN_COOLDOWN_MS=300000
 ```
+
+Al alcanzar cualquiera de los umbrales de capacidad, el backend no rechaza sesiones: deja un log `session.capacity.warning` con el total, conectadas, inicializándose, RSS de Node y memoria libre del sistema.
 
 ## VerificaciÃ³n
 

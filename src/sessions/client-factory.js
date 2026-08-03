@@ -2,7 +2,6 @@ import path from "path";
 
 import logger from "../utils/logger.js";
 import config from "../config/env.js";
-import { withTimeout } from "../utils/timeout.js";
 import store, { isCurrentRuntime } from "./session-store.js";
 import { setSessionState } from "./session-state.js";
 import { handleQr } from "./handlers/qr-handler.js";
@@ -30,6 +29,27 @@ function errorCode(error) {
 
 function normalizeEngineState(value) {
   return String(value || "").trim().replace(/([a-z])([A-Z])/g, "$1_$2").replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase();
+}
+
+async function waitForClientCreation(createPromise, runtime, generationId) {
+  let timeoutId;
+
+  try {
+    return await Promise.race([
+      createPromise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          // A QR-ready session is in WPPConnect's normal pairing window.
+          // Do not start another Chromium against the same userDataDir.
+          if (runtime.isCurrentGeneration(generationId) && runtime.state !== "QR_REQUIRED") {
+            reject(new Error("Initialization timeout"));
+          }
+        }, config.initSessionTimeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function createClient(companyId) {
@@ -91,11 +111,7 @@ export async function createClient(companyId) {
   runtime.connectPromise = createPromise;
 
   try {
-    const client = await withTimeout(
-      createPromise,
-      config.initSessionTimeoutMs,
-      "Initialization timeout",
-    );
+    const client = await waitForClientCreation(createPromise, runtime, generationId);
 
     if (!isCurrent(companyId, runtime, generationId)) {
       await closeDetachedClient(client);

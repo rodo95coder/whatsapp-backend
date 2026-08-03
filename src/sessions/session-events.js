@@ -9,6 +9,9 @@ import config from "../config/env.js";
 import store from "./session-store.js";
 import { scheduleReconnect } from "./reconnect-manager.js";
 import { setSessionState } from "./session-state.js";
+import { updateMessageAck } from "../services/message/message-tracker.js";
+import { readWebhookUrl } from "./session-files.js";
+import { emitWebhook } from "../services/webhook.js";
 
 function sessionReadyFile(companyId) {
   return path.join(config.sessionsPath, companyId, "session-ready.json");
@@ -88,5 +91,26 @@ export function registerSessionEvents({ client, companyId, runtime: expectedRunt
       return;
     }
     currentRuntime.touch();
+  });
+
+  client.onAck?.(async (ack) => {
+    const currentRuntime = store.getRuntime(companyId);
+    if (!currentRuntime || currentRuntime !== expectedRuntime || !currentRuntime.isCurrentGeneration(generationId)) return;
+
+    const message = updateMessageAck(currentRuntime, ack);
+    if (!message) return;
+
+    logger.info(`[${companyId}] message.ack id=${message.messageId} status=${message.status}`);
+    const webhookUrl = readWebhookUrl(companyId);
+    if (webhookUrl) {
+      await emitWebhook(webhookUrl, {
+        event: "message.ack",
+        companyId,
+        messageId: message.messageId,
+        to: message.to,
+        status: message.status,
+        timestamp: new Date(message.updatedAt).toISOString(),
+      });
+    }
   });
 }

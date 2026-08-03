@@ -13,6 +13,7 @@ router.post("/init-session", validateCompanyId, ctrl.initSession);
 router.get("/:companyId/qr", validateCompanyId, ctrl.getQR);
 router.get("/:companyId/status", validateCompanyId, ctrl.getStatus);
 router.post("/:companyId/send", validateCompanyId, ctrl.send);
+router.get("/:companyId/messages/:messageId/status", validateCompanyId, ctrl.getMessageStatus);
 router.post("/:companyId/logout", validateCompanyId, ctrl.logout);
 router.post("/:companyId/force-reset", validateCompanyId, ctrl.forceReset);
 
