@@ -17,7 +17,20 @@ const HOST = "0.0.0.0";
 await fs.ensureDir(config.sessionsPath);
 await fs.ensureDir(config.tempPath);
 
+function isExpectedBrowserTeardown(reason) {
+  const message = reason?.message || String(reason);
+  const teardownInProgress = store.getAllRuntimes().some((runtime) => runtime.shuttingDown);
+
+  return teardownInProgress && ["Target closed", "Connection closed", "Execution context was destroyed"].some((expected) =>
+    message.includes(expected));
+}
+
 process.on("unhandledRejection", (reason) => {
+  if (isExpectedBrowserTeardown(reason)) {
+    logger.debug(`Expected browser teardown rejection: ${reason?.message || reason}`);
+    return;
+  }
+
   logger.error(`UnhandledRejection: ${reason?.stack || reason}`);
 });
 
@@ -31,7 +44,7 @@ async function gracefulShutdown(signal) {
   logger.warn(`Graceful shutdown (${signal})`);
 
   try {
-    const runtimes = Array.from(store.getAllRuntimes().keys());
+    const runtimes = store.getAllRuntimes().map((runtime) => runtime.companyId);
 
     await Promise.allSettled(
       runtimes.map((companyId) =>

@@ -38,6 +38,13 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function isExpectedCloseError(error) {
+  const message = error?.message || String(error);
+
+  return ["Target closed", "Connection closed", "Execution context was destroyed"].some((expected) =>
+    message.includes(expected));
+}
+
 async function terminateProfileProcesses(companyId) {
   if (process.platform === "win32") {
     return;
@@ -58,7 +65,7 @@ export async function closeDetachedClient(client) {
   }
 }
 
-export async function destroyClient(companyId, { runtime: expectedRuntime } = {}) {
+export async function destroyClient(companyId, { runtime: expectedRuntime, skipClientClose = false } = {}) {
   const runtime = store.getRuntime(companyId);
 
   if (!runtime || (expectedRuntime && runtime !== expectedRuntime)) {
@@ -87,16 +94,20 @@ export async function destroyClient(companyId, { runtime: expectedRuntime } = {}
       logger.debug(`[${companyId}] remove listeners failed: ${error.message}`);
     }
 
-    try {
-      await withTimeout(client?.close?.(), config.browserCloseTimeoutMs, "Client close timeout");
-    } catch (error) {
-      logger.warn(`[${companyId}] client.close failed: ${error.message}`);
+    if (!skipClientClose) {
+      try {
+        await withTimeout(client?.close?.(), config.browserCloseTimeoutMs, "Client close timeout");
+      } catch (error) {
+        const log = isExpectedCloseError(error) ? logger.debug : logger.warn;
+        log(`[${companyId}] client.close failed: ${error.message}`);
+      }
     }
 
     try {
       await withTimeout(browser?.close?.(), config.browserCloseTimeoutMs, "Browser close timeout");
     } catch (error) {
-      logger.warn(`[${companyId}] browser.close failed: ${error.message}`);
+      const log = isExpectedCloseError(error) ? logger.debug : logger.warn;
+      log(`[${companyId}] browser.close failed: ${error.message}`);
     }
 
     if (browserPid) {

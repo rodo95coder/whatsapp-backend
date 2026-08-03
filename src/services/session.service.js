@@ -10,6 +10,16 @@ import { shutdownSession } from "../sessions/session-shutdown-manager.js";
 import config from "../config/env.js";
 import { withTimeout } from "../utils/timeout.js";
 
+function isExpectedLogoutNavigationError(error) {
+  const message = error?.message || String(error);
+
+  return [
+    "Execution context was destroyed",
+    "Target closed",
+    "Connection closed",
+  ].some((expected) => message.includes(expected));
+}
+
 export function getClient(companyId) {
   return store.getRuntime(companyId)?.client || null;
 }
@@ -85,11 +95,13 @@ export async function logout(companyId) {
       success: false,
       error: null,
     };
+    let skipClientClose = false;
 
     // Only an explicit user logout unpairs the linked WhatsApp device. Resets,
     // timeouts and automatic recovery intentionally remain local operations.
     if (runtime?.client?.logout) {
       runtime.manualLogout = true;
+      runtime.shuttingDown = true;
       remoteLogout.attempted = true;
 
       try {
@@ -106,8 +118,17 @@ export async function logout(companyId) {
         remoteLogout.success = true;
         logger.info(`[${companyId}] remote logout completed`);
       } catch (error) {
-        remoteLogout.error = error.message;
-        logger.warn(`[${companyId}] remote logout failed: ${error.message}`);
+        if (isExpectedLogoutNavigationError(error)) {
+          // WPP.conn.logout navigates away from the page immediately. Its
+          // protocol promise may reject after the logout command was accepted.
+          remoteLogout.success = true;
+          remoteLogout.warning = "WhatsApp closed the page while confirming logout";
+          skipClientClose = true;
+          logger.info(`[${companyId}] remote logout triggered page navigation`);
+        } else {
+          remoteLogout.error = error.message;
+          logger.warn(`[${companyId}] remote logout failed: ${error.message}`);
+        }
       }
     }
 
@@ -115,6 +136,7 @@ export async function logout(companyId) {
       reason: "LOGOUT",
       deleteAuth: true,
       deleteSessionMetadata: true,
+      skipClientClose,
     });
 
     return {

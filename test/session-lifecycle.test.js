@@ -90,3 +90,28 @@ test("logout explÃ­cito desvincula WhatsApp antes del cierre local", async () 
   assert.equal(runtime.client, null);
   store.removeRuntime(companyId);
 });
+
+test("logout trata la navegaciÃ³n de WhatsApp como cierre remoto esperado", async () => {
+  const companyId = "test-remote-navigation";
+  store.removeRuntime(companyId);
+  const runtime = store.createRuntime(companyId);
+  runtime.beginGeneration();
+  let closeCalls = 0;
+  runtime.client = {
+    async logout() {
+      throw new Error("Execution context was destroyed, most likely because of a navigation.");
+    },
+    async close() {
+      closeCalls += 1;
+    },
+    removeAllListeners() {},
+  };
+
+  const result = await logout(companyId);
+
+  assert.equal(result.remoteLogout.success, true);
+  assert.equal(result.remoteLogout.error, null);
+  assert.match(result.remoteLogout.warning, /closed the page/i);
+  assert.equal(closeCalls, 0);
+  store.removeRuntime(companyId);
+});

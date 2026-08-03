@@ -6,7 +6,7 @@ import { cleanupSessionFiles } from "./cleanup-session-files.js";
 
 export async function shutdownSession(
   companyId,
-  { reason = "UNKNOWN", deleteAuth = false, deleteSessionMetadata = false, runtime: expectedRuntime, restart = false } = {},
+  { reason = "UNKNOWN", deleteAuth = false, deleteSessionMetadata = false, runtime: expectedRuntime, restart = false, skipClientClose = false } = {},
 ) {
   const runtime = store.getRuntime(companyId);
 
@@ -28,7 +28,7 @@ export async function shutdownSession(
     runtime.invalidateGeneration();
     setSessionState(companyId, "SHUTTING_DOWN", { runtime, reason });
     runtime.manualLogout = reason === "LOGOUT";
-    await destroyClient(companyId, { runtime });
+    await destroyClient(companyId, { runtime, skipClientClose });
 
     if (deleteAuth || deleteSessionMetadata) {
       await cleanupSessionFiles(companyId, { deleteAuth, deleteSessionMetadata });
