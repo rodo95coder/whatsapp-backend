@@ -5,7 +5,11 @@ import { shutdownSession } from "./session-shutdown-manager.js";
 import { scheduleReconnect } from "./reconnect-manager.js";
 
 export function startSessionWatchdog() {
+  let running = false;
   const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try {
     for (const runtime of store.getAllRuntimes()) {
       const stuck = runtime.state === "CONNECTING"
         && !runtime.shuttingDown
@@ -20,6 +24,9 @@ export function startSessionWatchdog() {
         runtime,
       });
       scheduleReconnect(runtime.companyId, { runtime });
+    }
+    } finally {
+      running = false;
     }
   }, config.sessionWatchdogIntervalMs);
 

@@ -24,7 +24,12 @@ export async function restoreSessionsOnBoot() {
 
   logger.info(`Restaurando ${folders.length} sesiones`);
 
-  for (const companyId of folders) {
+  let cursor = 0;
+  const concurrency = Math.max(1, config.restoreConcurrency);
+
+  async function restoreNext() {
+    while (cursor < folders.length) {
+      const companyId = folders[cursor++];
     try {
       if (!isValidCompanyId(companyId)) {
         logger.warn(`[${companyId}] Carpeta inválida`);
@@ -60,7 +65,10 @@ export async function restoreSessionsOnBoot() {
     } catch (err) {
       logger.error(`[${companyId}] Error restaurando: ${err.message}`);
     }
+    }
   }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, folders.length) }, restoreNext));
 
   logger.info("Restore finalizado");
 }

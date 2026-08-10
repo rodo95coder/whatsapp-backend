@@ -114,7 +114,11 @@ export const send = async (req, res) => {
 
   try {
     const companyId = req.cleanCompanyId;
-    const { numbers, text } = req.body;
+    const { numbers, text, includeMessageId = false } = req.body;
+
+    if (typeof includeMessageId !== "boolean") {
+      return res.status(400).json({ success: false, message: "includeMessageId debe ser booleano" });
+    }
 
     const preparedFile = await prepareFileFromBody(req);
 
@@ -126,6 +130,7 @@ export const send = async (req, res) => {
       text,
       filePath: preparedFile.filePath,
       fileName: preparedFile.fileName,
+      includeMessageId,
     });
 
     return res.json(result);

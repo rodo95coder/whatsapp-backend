@@ -16,6 +16,23 @@ function purgeOldest(count) {
   return oldest.length;
 }
 
+function removeOldest(runtime) {
+  let oldest = null;
+  for (const message of runtime.trackedMessages.values()) {
+    if (!oldest || message.updatedAt < oldest.updatedAt) oldest = message;
+  }
+  if (oldest) runtime.trackedMessages.delete(oldest.messageId);
+}
+
+function rememberPendingAck(runtime, messageId, ack) {
+  runtime.pendingMessageAcks.set(messageId, ack);
+  // ACK events can arrive before WPP returns the send result. Keep only a
+  // small reconciliation window so unrelated events cannot grow this map.
+  while (runtime.pendingMessageAcks.size > 100) {
+    runtime.pendingMessageAcks.delete(runtime.pendingMessageAcks.keys().next().value);
+  }
+}
+
 function prune(runtime) {
   const now = Date.now();
   for (const [id, message] of runtime.trackedMessages) {
@@ -23,9 +40,7 @@ function prune(runtime) {
   }
 
   while (runtime.trackedMessages.size > config.maxTrackedMessagesPerSession) {
-    const oldest = Array.from(runtime.trackedMessages.values())
-      .sort((a, b) => a.updatedAt - b.updatedAt)[0];
-    runtime.trackedMessages.delete(oldest.messageId);
+    removeOldest(runtime);
   }
   const all = entries();
   if (all.length > config.maxTrackedMessagesTotal) purgeOldest(all.length - config.maxTrackedMessagesTotal);
@@ -48,6 +63,12 @@ export function trackMessage(runtime, message) {
     updatedAt: Date.now(),
   };
   runtime.trackedMessages.set(tracked.messageId, tracked);
+  const pendingAck = runtime.pendingMessageAcks.get(tracked.messageId);
+  if (pendingAck) {
+    tracked.status = mapAckStatus(pendingAck);
+    tracked.updatedAt = Date.now();
+    runtime.pendingMessageAcks.delete(tracked.messageId);
+  }
   prune(runtime);
   return tracked;
 }
@@ -55,7 +76,10 @@ export function trackMessage(runtime, message) {
 export function updateMessageAck(runtime, ack) {
   const messageId = ack?.id?._serialized || ack?.id || null;
   const message = messageId ? runtime.trackedMessages.get(messageId) : null;
-  if (!message) return null;
+  if (!message) {
+    if (messageId && ack?.ack !== undefined) rememberPendingAck(runtime, messageId, ack.ack);
+    return null;
+  }
   message.status = mapAckStatus(ack.ack);
   message.updatedAt = Date.now();
   prune(runtime);

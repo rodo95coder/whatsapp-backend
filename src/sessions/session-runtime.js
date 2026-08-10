@@ -25,6 +25,7 @@ export class SessionRuntime {
     this.shutdownPromise = null;
     this.shuttingDown = false;
     this.trackedMessages = new Map();
+    this.pendingMessageAcks = new Map();
   }
 
   touch() {

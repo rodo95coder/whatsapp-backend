@@ -11,7 +11,7 @@ import { scheduleReconnect } from "./reconnect-manager.js";
 import { setSessionState } from "./session-state.js";
 import { updateMessageAck } from "../services/message/message-tracker.js";
 import { readWebhookUrl } from "./session-files.js";
-import { emitWebhook } from "../services/webhook.js";
+import { enqueueWebhook } from "../services/webhook-delivery-queue.js";
 
 function sessionReadyFile(companyId) {
   return path.join(config.sessionsPath, companyId, "session-ready.json");
@@ -103,7 +103,7 @@ export function registerSessionEvents({ client, companyId, runtime: expectedRunt
     logger.info(`[${companyId}] message.ack id=${message.messageId} status=${message.status}`);
     const webhookUrl = readWebhookUrl(companyId);
     if (webhookUrl) {
-      await emitWebhook(webhookUrl, {
+      enqueueWebhook(webhookUrl, {
         event: "message.ack",
         companyId,
         messageId: message.messageId,

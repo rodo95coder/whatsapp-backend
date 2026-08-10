@@ -45,9 +45,26 @@ test("envÃ­a texto directamente por WPP y conserva el ACK", async () => {
 
   assert.deepEqual(result.summary, { total: 1, successful: 1, failed: 0 });
   assert.equal(result.results[0].status, "server");
-  assert.equal(result.results[0].messageId, "message-123");
   assert.equal(result.results[0].deliveryConfirmed, false);
+  assert.equal("messageId" in result.results[0], false);
   assert.equal(runtime.trackedMessages.has("message-123"), true);
+});
+
+test("expone messageId solo cuando el consumidor lo solicita", async () => {
+  connectedRuntime(async () => ({
+    id: "message-include-id",
+    ack: 1,
+    transportResult: "OK",
+  }));
+
+  const result = await sendMessage({
+    companyId,
+    numbers: ["51971934057"],
+    text: "mensaje de prueba",
+    includeMessageId: true,
+  });
+
+  assert.equal(result.results[0].messageId, "message-include-id");
 });
 
 test("reporta fallo cuando WPP no acepta el texto", async () => {

@@ -67,11 +67,19 @@ const config = {
   wppLogLevel:
     process.env.WPP_LOG_LEVEL || "warn",
 
+  corsOrigins:
+    process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean)
+      : [],
+
   clientMaxBodySize:
     process.env.CLIENT_MAX_BODY_SIZE || "50mb",
 
   webhookTimeoutMs:
     toNumber(process.env.WEBHOOK_TIMEOUT_MS, 8000),
+
+  webhookConcurrency:
+    toNumber(process.env.WEBHOOK_CONCURRENCY, 2),
 
   autoReconnect:
     toBoolean(process.env.AUTO_RECONNECT, true),
@@ -108,6 +116,12 @@ const config = {
 
   maxQueuePerSession:
     toNumber(process.env.MAX_QUEUE_PER_SESSION, 1000),
+
+  restoreConcurrency:
+    toNumber(process.env.SESSION_RESTORE_CONCURRENCY, 1),
+
+  slowRequestMs:
+    toNumber(process.env.SLOW_REQUEST_MS, 2000),
 
   messageTrackerTtlMs:
     toNumber(process.env.MESSAGE_TRACKER_TTL_MS, 24 * 60 * 60 * 1000),

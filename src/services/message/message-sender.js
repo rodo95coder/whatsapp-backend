@@ -78,6 +78,20 @@ async function sendTextDirectly(client, chatId, text) {
   );
 }
 
+function publicSendResult(number, response, { includeMessageId = false } = {}) {
+  const result = {
+    number,
+    success: true,
+    status: response.status,
+    deliveryConfirmed: ["delivered", "read", "played"].includes(response.status),
+  };
+
+  // Message IDs are implementation details for most consumers. They remain
+  // available on demand for clients that poll the existing status endpoint.
+  if (includeMessageId && response.messageId) result.messageId = response.messageId;
+  return result;
+}
+
 async function sendSingleMessage({ client, number, text, filePath, fileName }) {
   const chatId = normalizeNumber(number);
 
@@ -139,6 +153,7 @@ export async function sendMessage({
   text,
   filePath,
   fileName,
+  includeMessageId = false,
 }) {
   validateSendPayload({
     numbers,
@@ -146,7 +161,7 @@ export async function sendMessage({
     filePath,
   });
 
-  if (getQueueSize(companyId) > maxQueuePerSession) {
+  if (getQueueSize(companyId) >= maxQueuePerSession) {
     throw new Error("Queue overloaded");
   }
 
@@ -180,13 +195,12 @@ export async function sendMessage({
           continue;
         }
 
-        results.push({
-          number,
-          success: true,
-          ...sanitized,
-          deliveryConfirmed: ["delivered", "read", "played"].includes(sanitized.status),
-        });
         trackMessage(runtime, sanitized);
+        const tracked = runtime.trackedMessages.get(sanitized.messageId);
+        results.push(publicSendResult(number, {
+          ...sanitized,
+          status: tracked?.status || sanitized.status,
+        }, { includeMessageId }));
       } catch (error) {
         results.push({
           number,
