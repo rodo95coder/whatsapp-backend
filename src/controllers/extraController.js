@@ -2,6 +2,7 @@
 
 import sessionManager from "../services/session.service.js";
 import { parseTemplate } from "../services/template.js";
+import { verifyWhatsAppNumber } from "../services/number-verification.js";
 import logger from "../utils/logger.js";
 
 export async function verifyNumber(req, res) {
@@ -25,7 +26,7 @@ export async function verifyNumber(req, res) {
       });
     }
 
-    const exists = await client.isRegisteredUser(number);
+    const exists = await verifyWhatsAppNumber(client, number);
 
     return res.json({
       success: true,

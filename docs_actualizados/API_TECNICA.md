@@ -402,7 +402,7 @@ Respuesta:
 { "success": true, "exists": true }
 ```
 
-Requiere sesión activa; de lo contrario devuelve `400` con `Session not active`.
+Requiere sesión activa; de lo contrario devuelve `400` con `Session not active`. El backend consulta `checkNumberStatus` de WPPConnect con el número normalizado a `@c.us`; el resultado público `exists` corresponde a `numberExists` de WhatsApp.
 
 ### `POST /extra/send-bulk`
 
